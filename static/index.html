@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-page-node-id="jf985I0FTmJVQ6KWRoFwVV">
+<head data-page-node-id="nTyQBy9SUojFVLGRUirdJY">
+<meta charset="UTF-8" data-page-node-id="RQRQts3F6PxIIAYqnATikW">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="MLFtl7vLqKfRpl7v4vxQCe">
+<title>TokenWatch · CC Switch 用量与余额监控台</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/styles.css" data-page-node-id="TBAYWe90gwxdDdpLECKcyd">
+</head>
+<body data-page-node-id="FDtz0PdD0A2s7AagmCv4Ad">
+<div class="bg-grid" aria-hidden="true" data-page-node-id="6iGJjQcgwDAtkMPmYmlauq"></div>
+
+<header class="topbar" data-page-node-id="aAtpFXwAlCKmTknPQO87TK">
+  <div class="brand" data-page-node-id="XVqbDUqHIikaiXUse1uEeU">
+    <div class="brand-mark" aria-hidden="true" data-page-node-id="VT0bUXMGHGufsbclTtzxFz">
+      <svg viewBox="0 0 48 48" width="32" height="32" data-page-node-id="KtVO4fQxpFWPRFzKzxtLKi">
+        <defs data-page-node-id="3Kr3LU2pAXVLPLwsPxsdkT">
+          <linearGradient id="eyeG" x1="0%" y1="10%" x2="100%" y2="90%" data-page-node-id="eyeGrad">
+            <stop offset="0%" stop-color="#22D3EE" data-page-node-id="eg0"/>
+            <stop offset="55%" stop-color="#3B82F6" data-page-node-id="eg1"/>
+            <stop offset="100%" stop-color="#818CF8" data-page-node-id="eg2"/>
+          </linearGradient>
+        </defs>
+        <path d="M 6.15 24 A 19 19 0 0 1 41.85 24" fill="none" stroke="url(#eyeG)" stroke-width="4.2" stroke-linecap="round" data-page-node-id="eyeTop"/>
+        <path d="M 41.85 24 A 19 19 0 0 1 6.15 24" fill="none" stroke="url(#eyeG)" stroke-width="4.2" stroke-linecap="round" data-page-node-id="eyeBot"/>
+        <circle cx="24" cy="24" r="4.9" fill="url(#eyeG)" data-page-node-id="eyePupil"/>
+        <circle cx="22.3" cy="22.4" r="1.5" fill="#ffffff" opacity="0.92" data-page-node-id="eyeSpec"/>
+      </svg>
+    </div>
+    <div class="brand-text" data-page-node-id="s5KjKQtlMce1kDHTMXBGHC">
+      <h1 data-page-node-id="P1ny0qgOgG85bdXJEOxq5i">TokenWatch <span class="brand-sub" data-page-node-id="LGo94ZpxAFAaf6PO5pACfP">用量与余额监控台</span></h1>
+      <p data-page-node-id="MhKcVt1n9XklO5WbqBarOP">基于 CC Switch 接入的全部模型 · 自动查询官方余额 · 一键直达充值</p>
+    </div>
+  </div>
+
+  <div class="top-actions" data-page-node-id="GQGycJpRueDHPuYzHe7SzF">
+    <div id="syncState" class="sync-chip" title="" data-page-node-id="n69CiQS04G2DOwOEyRrNuL">
+      <span class="dot" id="syncDot" data-page-node-id="2eK4xfPxvXHZAHXFG7jEuB"></span><span id="syncText" data-page-node-id="BkRFHEvWkICM0zXGWHZUDB">读取中…</span>
+    </div>
+    <button id="btnTheme" class="btn btn-ghost" title="切换浅色/暗色主题" aria-label="切换主题" data-page-node-id="fDyoJNFgUSHSchH23XUeew">
+      <svg id="themeIcon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" data-page-node-id="HoqZ6hjvGmrLux7IXmbh5I"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" fill="currentColor" data-page-node-id="aUsjecDqTFJ1f9TVJJqm9W"/></svg>
+    </button>
+    <button id="btnRefresh" class="btn btn-ghost" title="立即刷新全部余额与用量" data-page-node-id="lp8iVqlAwiSRHN1tEwDgpn">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" data-page-node-id="CdA6JcdLMET0OneawXGqaR"><path d="M13.65 2.5A7 7 0 1 0 15 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" data-page-node-id="J4cXhSCKEPoAEioTM4hM8L"/><path d="M13.5 2v3.5H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="AFGCSGWD54Su3NoyjB7iCY"/></svg>
+      刷新
+    </button>
+    <button id="btnSettings" class="btn btn-ghost" title="设置" data-page-node-id="ofE6A1iJeCUegoLb3UoAGv">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" data-page-node-id="sL1N0Ji83l6YxmG4orrtYN"><path d="M8 10.2A2.2 2.2 0 1 0 8 5.8a2.2 2.2 0 0 0 0 4.4Z" fill="none" stroke="currentColor" stroke-width="1.5" data-page-node-id="OQ5BzkEXggCyEX01Iv1Imo"/><path d="M13.5 8.6c.3-.2.3-.6.3-.6s0-.4-.3-.6l-1.4-.8c-.3-.2-.4-.6-.3-.9l.2-1.4a.6.6 0 0 0-.9-.7l-1.4 1a1.5 1.5 0 0 1-1.4 0l-1.4-1a.6.6 0 0 0-.9.7l.2 1.4c.1.3 0 .7-.3.9l-1.4.8c-.3.2-.3.6-.3.6s0 .4.3.6l1.4.8c.3.2.4.6.3.9l-.2 1.4c-.1.4.2.7.5.7.2 0 .3-.1.4-.2l1.4-1a1.5 1.5 0 0 1 1.4 0l1.4 1c.1.1.3.1.4.2.4 0 .6-.3.5-.7l-.2-1.4c-.1-.3 0-.7.3-.9l1.4-.8Z" fill="none" stroke="currentColor" stroke-width="1.2" data-page-node-id="hPlJonxTJlGkfGZ2cStgCj"/></svg>
+      设置
+    </button>
+  </div>
+</header>
+
+<main class="shell" data-page-node-id="CsTfR8iofxgUSciAoLtm7e">
+  <!-- 顶部汇总 -->
+  <div class="sec-head" data-page-node-id="secHead1">
+    <h2 class="sec-title">总览</h2>
+    <span class="sec-note">余额实时查询 · 用量以官网实扣口径优先，缺失自动回落本地记录</span>
+  </div>
+  <section class="tape" aria-label="汇总" data-page-node-id="L4OLjkkK3glpETVqeLlByM">
+    <div class="tape-item" id="tapeBalance" data-page-node-id="NcddS5N0hhhPamYXEnqUJG">
+      <div class="tape-k" data-page-node-id="2gDjOMuN3AQHc3qvc8OwCv">可用余额 <span class="tape-note" data-page-node-id="gwm7Em0swutqcWLxlXnSqM">充值制账户合计</span></div>
+      <div class="tape-v" id="tapeBalanceV" data-page-node-id="P5jn9qtubgKuFp9braqCC7">—</div>
+      <div class="tape-f" id="tapeBalanceF" data-page-node-id="SpHQBa1d0gx2dFfdNUcS30">按官方接口实时查询</div>
+    </div>
+    <div class="tape-item" id="tapeCost7" data-page-node-id="FTxvrAZtsnMbnwk9NvKvlB">
+      <div class="tape-k" data-page-node-id="72A7Uk366meYqs3X7Y7obe">近 7 日消耗 <span class="tape-note" id="tapeCost7Note" data-page-node-id="Aj7n7qDDEckWUyq32RLw9B">官网优先</span></div>
+      <div class="tape-v" id="tapeCost7V" data-page-node-id="fd3H4LZkv2bFwM9LXWJGcF">—</div>
+      <div class="tape-alt" id="tapeCost7Cny" data-page-node-id="fd3H4LZkv2bFwM9LXWJGcF-cny">—</div>
+      <div class="tape-f" id="tapeCost7F" data-page-node-id="bqmdjeFtRbcKR6MabSMupV">按 CC Switch 用量日志统计</div>
+    </div>
+    <div class="tape-item" id="tapeTok7" data-page-node-id="jeEc8z1rMcezGbW8y1D1TK">
+      <div class="tape-k" data-page-node-id="XO8DxeljbnHxxOieTdLrES">近 7 日 Token <span class="tape-note" data-page-node-id="YRm3fMJDj3J1D6qUdSYhEf">输入+输出+缓存</span></div>
+      <div class="tape-v" id="tapeTok7V" data-page-node-id="5pNeaEMHNB138IXbHHavJC">—</div>
+      <div class="tape-f" id="tapeTok7F" data-page-node-id="JBBwnYXrCSCQ175n44Lj4K">已接入提供商：<b id="tapeProviders" data-page-node-id="t5JLfv4BRrggoJfDQMpCGT">—</b></div>
+    </div>
+    <div class="tape-item" id="tapeActive" data-page-node-id="wdqVoG8ORPSlyTHKk4ZmCY">
+      <div class="tape-k" data-page-node-id="rdiWzTu2VJ4Q0U5Q6EvoHq">监控状态</div>
+      <div class="tape-v tape-v-sm" id="tapeActiveV" data-page-node-id="Pug7FxA06G2lwdGefdzHQj">—</div>
+      <div class="tape-f" id="tapeActiveF" data-page-node-id="c9T1sQeRu2s1iMN0bZiM8P">数据目录：<span id="tapeDb" data-page-node-id="LWenrE848D4QuF5fT1wDCd">~/.cc-switch/cc-switch.db</span></div>
+    </div>
+  </section>
+
+  <!-- 提供商卡片 -->
+  <div class="sec-head" data-page-node-id="secHead2">
+    <h2 class="sec-title">接入提供商 <span class="sec-count" id="provCount"></span></h2>
+    <span class="sec-note">余额实时查询 · 一键直达充值</span>
+  </div>
+  <section class="providers" id="providers" aria-label="各平台余量与用量" data-page-node-id="swetO7Ilw4lcquY7JoT7YG"></section>
+
+  <!-- 明细面板 -->
+  <section class="panel" id="detailPanel" aria-label="用量明细" data-page-node-id="ZCeDWjj7zdcrpNk688u1op">
+    <div class="panel-head" data-page-node-id="PBDs2dz8hJlyHYKuR358qI">
+      <div class="panel-title" data-page-node-id="EvPE4LMG7XCWDmrBUEWwkJ">
+        <h2 data-page-node-id="y7d2DCPp3xQkwK2BiCSS4q">用量明细</h2>
+        <div class="seg" id="rangeSeg" role="tablist" aria-label="统计范围" data-page-node-id="NCsKJ2ygGNANZQRV0EVurA">
+          <button data-days="7" data-page-node-id="CbpgOtbYLLeAFj6lpOMqnc">7 天</button>
+          <button data-days="30" class="on" data-page-node-id="AWh1caGlZVZcOfR2AhIX8V">30 天</button>
+          <button data-days="90" data-page-node-id="DyeP93TEIo3QkeCSBiZKT9">90 天</button>
+          <button data-days="365" data-page-node-id="SKv5zyd3k4T9SPZkY3BQFR">全年</button>
+        </div>
+        <div class="seg seg-alt" id="viewSeg" role="tablist" aria-label="明细维度">
+          <button data-view="provider" class="on">按提供商</button>
+          <button data-view="model">按模型</button>
+        </div>
+      </div>
+      <div class="panel-legend" id="legend" data-page-node-id="u8V7CJZN8EqVNBC5NApTGC"></div>
+    </div>
+
+    <!-- 数据来源：供应商官网真实用量优先，未接通的自动回落 CC Switch 本地记录 -->
+    <div class="src-bar">
+      <span class="src-badge" id="srcBadge"><i class="src-dot"></i>读取中…</span>
+      <span class="src-hint" id="srcHint"></span>
+      <span class="src-credstate" id="srcCredState"></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnPlatformCreds">平台凭据</button>
+    </div>
+
+    <div class="exp-strip" id="expStrip" hidden></div>
+
+    <div id="platformView"></div>
+
+    <div class="chart-wrap" data-page-node-id="RYNaybMvb29vAETASECBJP">
+      <div class="chart-toggle" data-page-node-id="UsJyhMgGn9GSRDdvICOFQx">
+        <label data-page-node-id="BMvdKdq2DWU8iVcqpfnIDY"><input type="radio" name="metric" value="cost" checked data-page-node-id="Wi7wS2pI8Rw9HAzgAt2ZRJ"><span data-page-node-id="6AHwR4hinHWEC5hOr6bAUA">消耗金额</span></label>
+        <label data-page-node-id="gj31FJr9wgExqLuZ5qFKlq"><input type="radio" name="metric" value="tokens" data-page-node-id="ohmHJuowek8m50AjwhbtWf"><span data-page-node-id="3jx0a0HXNLqtOzHcxIPDQo">Tokens</span></label>
+      </div>
+      <svg id="trendChart" class="trend" viewBox="0 0 1200 260" preserveAspectRatio="none" role="img" aria-label="用量趋势图" data-page-node-id="K3eiljiVDSWT121jkbs4Ae"></svg>
+    </div>
+
+    <div class="table-wrap" data-page-node-id="3JuOZed85APearz21N5atd">
+      <table class="tbl" id="modelTable" data-page-node-id="eslvS12ftNFdj1vqEQR8Mk">
+        <thead data-page-node-id="azuW2zQkPPidQuNjjSodly">
+          <tr data-page-node-id="96hVz54b8WNLKPRvzlH2ZT">
+            <th data-page-node-id="m6AUNlOLCQmCIFfPc8e7Im">提供商</th><th data-page-node-id="lGuzAqGxIoPWRAb4tdYsel">模型</th><th class="num" data-page-node-id="ZaBykk6ZB8UJo3MiLTnq7S">请求数</th>
+            <th class="num" data-page-node-id="csKZYzAxOFE732DVh0GxUH">输入 token</th><th class="num" data-page-node-id="DNVJ0P8lKL1uIvGYC2cPEX">输出 token</th>
+            <th class="num" data-page-node-id="AyNEsRe2YHhnYdhAQkVDCe">缓存读 token</th><th class="num" data-page-node-id="NCWGNnej6qu2KVNdgEfep3">消耗 USD</th>
+            <th class="num" data-page-node-id="KuBB0kxrI8t3EabHxWcbpN">占比</th><th class="num" data-page-node-id="mwrFiBVf3bnlbCJKMWBTzB">最后活跃</th>
+          </tr>
+        </thead>
+        <tbody id="modelRows" data-page-node-id="XXgMcKPvYFLPEcSp3PgGFR"></tbody>
+      </table>
+      <p class="table-note" id="tableNote" data-page-node-id="bFfsTYp27CPlL2SDUogSBJ"></p>
+    </div>
+  </section>
+
+  <footer class="foot" data-page-node-id="THVHwHo4H5pGtCjbDG8lT5">
+    <p data-page-node-id="lx8xAmC7STD55PAN64AgRL"><b data-page-node-id="bruMx7sNS2KFytHFoslTbW">数据来源：</b>余额来自各平台官方账户接口实时查询；用量<strong>以供应商官网真实用量优先</strong>（用你的网页登录态直连供应商控制台，即账户实际扣费口径），官网未接通或该平台不提供明细时，自动回落为该提供商的 <strong>CC Switch 本地记录</strong>（本机 Claude Code / Codex 会话日志与本地代理），两者在同一个视图里合成展示、逐家标注来源。平台凭据只保存在本机应用数据目录的 <code data-page-node-id="pcredFile">platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
+    <p data-page-node-id="iOeJUV38RZIYvIduKFs5BS"><b data-page-node-id="fZVarIVPwJSzhaTsgCTAZk">说明：</b>Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算，汇率 ¥1≈$<span id="fxRate" data-page-node-id="0eOm7g7CgrG6zRzXj0oZof">7.10</span> 仅供参考；智谱 GLM 若为 Coding Plan 套餐，显示的是额度窗口剩余百分比。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
+  </footer>
+</main>
+
+<!-- 设置弹窗 -->
+<div class="modal-mask" id="settingsModal" hidden data-page-node-id="JXxbg3Ca0qQnWA3PDhFbld">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" data-page-node-id="Wu9bQAfkx4vIdDF7YeHB9k">
+    <div class="modal-head" data-page-node-id="kZhEuFQMWc6Hkc8gcRYBMF">
+      <h3 id="settingsTitle" data-page-node-id="Od4e5Vh1QEbMpsWIJGFvbB">监控台设置</h3>
+      <button class="icon-btn" id="btnCloseSettings" aria-label="关闭" data-page-node-id="liGsOieZZCNm50T1EVqaAC">✕</button>
+    </div>
+    <div class="modal-body" data-page-node-id="DlbMrGtfv6hxMniDBdXzYS">
+      <label class="field" data-page-node-id="SFzb3fr10Zd8clqSXnaS0a">
+        <span data-page-node-id="0p2FMbcnqwAf4qDP4QYe1f">自动刷新间隔（秒）</span>
+        <input type="number" id="cfgRefresh" min="30" max="86400" step="10" data-page-node-id="OUaBlUtqb2v1el2j9FKSUa">
+      </label>
+      <label class="field" data-page-node-id="PsCOm4SJFtRt6q8a7cOwuX">
+        <span data-page-node-id="Sg2zTRjO0qC95DPJqub130">余额预警阈值（¥，低于则标黄提醒）</span>
+        <input type="number" id="cfgLow" min="0" max="100000" step="1" data-page-node-id="YxRcWVW1ZpvESvvGmB6k38">
+      </label>
+      <div class="field field-block" data-page-node-id="lowEditsBlock1">
+        <span data-page-node-id="lowEditsLabel1">各提供商单独阈值（¥，留空则用上面的默认值）</span>
+        <div id="lowEdits" class="recharge-edits"></div>
+      </div>
+      <label class="field" data-page-node-id="8uzHSEAjvUfeC92E4fM9rH">
+        <span data-page-node-id="yua5VOwIGj9QIhhT6Bi8Hy">默认统计天数</span>
+        <input type="number" id="cfgDays" min="7" max="365" step="1" data-page-node-id="6uGwhVdEcVzxAL7oTDtuUu">
+      </label>
+      <div class="field field-block" data-page-node-id="rbRjlBHHiLP1V2HXjgicZj">
+        <span data-page-node-id="9VDlh2bikKKS11RcWYnHS9">充值页直达地址（可覆盖默认值）</span>
+        <div id="rechargeEdits" class="recharge-edits" data-page-node-id="weNnDBmFjyu3Yd9wwy9yd6"></div>
+      </div>
+      <p class="modal-note" data-page-node-id="B8TAxtZLWyPPqMeHtVpSS8">刷新间隔、余额阈值与充值地址保存到本机 <code data-page-node-id="RXcrc8RmeOvjpPcRSblyxT">config.json</code>，不含任何密钥。各提供商单独阈值留空即沿用上面的默认值。</p>
+    </div>
+    <div class="modal-foot" data-page-node-id="BmqgK3Ea1FibZqXKz2rV8J">
+      <button class="btn btn-ghost" id="btnCancelSettings" data-page-node-id="bcr42gV3B0DUNYm6R42nKb">取消</button>
+      <button class="btn btn-primary" id="btnSaveSettings" data-page-node-id="rdFIlgUSpwaPqPFlUHVxMC">保存设置</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden data-page-node-id="hB33bYK6ZZcjCRHl0Znrv7"></div>
+
+<!-- 平台凭据弹窗 -->
+<div class="modal-mask" id="platformModal" hidden>
+  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="platformTitle">
+    <div class="modal-head">
+      <h3 id="platformTitle">平台侧凭据配置</h3>
+      <button class="icon-btn" id="btnClosePlatform" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body" id="platformForm"></div>
+    <div class="modal-foot">
+      <span class="modal-foot-note" id="platformFootNote"></span>
+      <button class="btn btn-ghost" id="btnClosePlatform2">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

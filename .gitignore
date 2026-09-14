@@ -1,0 +1,63 @@
+# ============================================================
+# TokenWatch · .gitignore
+# 原则：仓库里只放「源码 + 测试 + 文档」。
+#      二进制产物、截图、备份、以及任何与个人账号相关的数据一律不入库。
+# ============================================================
+
+# ---------- 构建产物 ----------
+build/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---------- 运行期配置与日志（本机状态，不是源码） ----------
+config.json
+.dev_config.json
+*.log
+nul
+
+# ---------- 个人数据：绝对不能提交 ----------
+# 平台登录凭据（JWT / rtoken 等），保存在 %APPDATA%\TokenWatch\
+platform_creds.json
+_kimi_tokens.json
+*_tokens.json
+# 采集到的官方接口真实响应（含账户余额、组织 ID 等）
+api_probe/
+# 真实用量验收报告（含模型名、金额、请求数）
+_real_report.json
+
+# ---------- 截图与备份（含真实余额 / 模型名 / 用量） ----------
+shots/
+backups/
+icon-drafts/
+icon_drafts/
+brand-ref/
+# 图片默认不入库。要放文档配图，请把脱敏后的图放到 docs/ 下
+*.png
+*.jpg
+*.jpeg
+*.gif
+!docs/**/*.png
+
+# ---------- 一次性开发脚本（写凭据 / 图标草稿 / 快捷方式助手） ----------
+_write_creds.py
+_write_zhipu_creds.py
+gen_icon_drafts*.py
+gen_icon_v*.py
+calc*.py
+hex_lnk.py
+dump_lnk.py
+inspect_lnk.py
+gen_lnk*.py
+make_shortcut.vbs
+update_desktop_lnk.py
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 草稿图标，非最终产物
+/test.ico
