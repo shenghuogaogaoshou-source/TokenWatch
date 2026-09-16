@@ -150,8 +150,10 @@ cc-token-monitor/
 ├─ tokenwatch.ico            应用图标
 ├─ test_real.js              真实数据端到端验收（Playwright，不打桩）
 ├─ test_unified.js           合成视图一致性回归（打桩版）
-└─ shot_ui.js                界面截图（输出到 shots/）
+└─ shot_ui.js                界面截图
 ```
+
+> 三个测试脚本的截图与验收报告统一输出到 `shots/`（已 gitignore），不会污染仓库根目录。
 
 > `dist/`、`build/`、`shots/` 以及所有运行期配置都在 `.gitignore` 里，不进仓库。
 

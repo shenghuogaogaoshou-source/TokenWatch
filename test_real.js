@@ -1,6 +1,11 @@
 // test_real.js —— 用真实官网凭据跑端到端验收（不打桩）：状态条 / 卡片 / 图表 / 模型表
 const { chromium } = require('playwright');
 const fs = require('fs');
+const path = require('path');
+
+// 截图与验收报告统一落到 shots/（已 gitignore），避免污染仓库根目录
+const SHOTS = path.join(__dirname, 'shots');
+fs.mkdirSync(SHOTS, { recursive: true });
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8734';
 const OUT = [];
@@ -148,10 +153,10 @@ const OUT = [];
   add('无文字溢出', overflow.length === 0, JSON.stringify(overflow));
   add('无控制台错误', errs.length === 0, errs.join(' | '));
 
-  await page.screenshot({ path: 'shot_real_light.png', fullPage: true });
+  await page.screenshot({ path: path.join(SHOTS, 'shot_real_light.png'), fullPage: true });
   await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'dark'); });
   await page.waitForTimeout(400);
-  await page.screenshot({ path: 'shot_real_dark.png', fullPage: true });
+  await page.screenshot({ path: path.join(SHOTS, 'shot_real_dark.png'), fullPage: true });
   await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'light'); });
 
   /* —— 交付后优化：按提供商单独设阈值（设置弹窗） —— */
@@ -197,11 +202,11 @@ const OUT = [];
   const pfExp = await page.$$eval('#platformForm .pf-exp',
     (ns) => ns.map((n) => n.textContent.replace(/\s+/g, ' ').trim()));
   add('平台凭据弹窗标注票据期限', pfExp.length >= 1, pfExp.join(' | ') || '-');
-  await page.screenshot({ path: 'shot_real_platform.png', fullPage: false });
+  await page.screenshot({ path: path.join(SHOTS, 'shot_real_platform.png'), fullPage: false });
   await page.click('#btnClosePlatform');
 
   const report = { base: BASE, badge, hint, cred, cards, rowCount: rows.length, rows, bars, legend: (legend || '').trim(), tableNote, overflow, dupNames, expLines, stripInfo, pfExp, checks, errors: errs };
-  fs.writeFileSync('_real_report.json', JSON.stringify(report, null, 1), 'utf-8');
+  fs.writeFileSync(path.join(SHOTS, 'real_report.json'), JSON.stringify(report, null, 1), 'utf-8');
 
   console.log('== 验收 ==');
   for (const c of checks) console.log('  ' + (c.ok ? 'PASS' : 'FAIL') + '  ' + c.name + (c.got && c.got !== '-' ? '   [' + c.got + ']' : ''));

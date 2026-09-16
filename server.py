@@ -1175,7 +1175,7 @@ def kimi_refresh(cred):
     rtok = str((cred or {}).get("refresh_token") or "").strip()
     if not rtok:
         return None
-    code, j = _kimi_get("refreshToken", ms_auth=rtok)
+    _, j = _kimi_get("refreshToken", ms_auth=rtok)
     if not isinstance(j, dict) or int(j.get("code") or 0) != 0:
         return None
     d = j.get("data") or {}
@@ -1358,8 +1358,8 @@ def zhipu_account(cred, timeout=20):
     """账户报表：余额 / 累计充值 / 累计消费（拿不到返回 None）"""
     if not str((cred or {}).get("jwt_token") or "").strip():
         return None
-    code, j = http_json(ZHIPU_API + "/biz/account/query-customer-account-report",
-                        "GET", _zh_hdr(cred), None, timeout)
+    _, j = http_json(ZHIPU_API + "/biz/account/query-customer-account-report",
+                     "GET", _zh_hdr(cred), None, timeout)
     if not isinstance(j, dict) or not (j.get("success") or j.get("code") in (0, 200)):
         return None
     d = j.get("data") or {}

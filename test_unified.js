@@ -6,6 +6,12 @@
  * 用法：NODE_PATH=... node test_unified.js <port>
  */
 const { chromium } = require("playwright");
+const path = require("path");
+const fs = require("fs");
+
+// 截图落到 shots/（已 gitignore），避免污染仓库根目录
+const SHOTS = path.join(__dirname, "shots");
+fs.mkdirSync(SHOTS, { recursive: true });
 const PORT = process.argv[2] || "8799";
 const BASE = "http://127.0.0.1:" + PORT;
 
@@ -246,11 +252,11 @@ function mkModelDays(models, seed) {
   console.log("  总览 7 日消耗 :", cur.tape, "  首选单价:", cur.price);
   console.log("  残留美元符号 :", cur.dollars.length ? cur.dollars : "无", curOk ? "✓" : "✗");
 
-  await page.screenshot({ path: "shot_unified_light.png", fullPage: true });
+  await page.screenshot({ path: path.join(SHOTS, "shot_unified_light.png"), fullPage: true });
   await page.evaluate(() => localStorage.setItem("tokenwatch-theme", "dark"));
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(900);
-  await page.screenshot({ path: "shot_unified_dark.png", fullPage: true });
+  await page.screenshot({ path: path.join(SHOTS, "shot_unified_dark.png"), fullPage: true });
 
   const pass = !res.hasToggle && /官网实时/.test(res.badge || "") &&
                res.cards.some((c) => /官网实时/.test(c.src || "")) &&
