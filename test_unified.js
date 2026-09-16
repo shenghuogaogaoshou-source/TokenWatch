@@ -229,8 +229,22 @@ function mkModelDays(models, seed) {
               priceOk ? "\u2713" : "\u2717");
 
   console.log("=== 口径一致性（近 7 日消耗）===");
-  console.log(`  总览带 $${consist.tape.toFixed(2)} vs 趋势图 $${consist.chart.toFixed(2)}  偏差 $${diff.toFixed(4)}  ${consistOk ? "✓ 一致" : "✗ 不一致"}`);
+  console.log(`  总览带 ¥${consist.tape.toFixed(2)} vs 趋势图 ¥${consist.chart.toFixed(2)}  偏差 ¥${diff.toFixed(4)}  ${consistOk ? "✓ 一致" : "✗ 不一致"}`);
   console.log(`  官网覆盖 ${consist.platN} 家 · 本地兜底 ${consist.localN} 家 · 图例（逐家 API / 平台）: ${res.legend.join(" / ")}`);
+
+  // ---- 币种：全站唯一口径是人民币，任何位置都不该再出现 $ ----
+  const cur = await page.evaluate(() => {
+    const costCells = [...document.querySelectorAll("#modelRows tr td.cost")].map((t) => t.textContent.trim());
+    const ta = ((document.querySelector("#tapeCost7V") || {}).textContent || "").trim();
+    const pr = ((document.querySelector("#pricingPanel .pl-price") || {}).textContent || "").trim();
+    return { costCells, tape: ta, price: pr, dollars: [...costCells, ta, pr].filter((s) => s.includes("$")) };
+  });
+  const curOk = cur.costCells.length > 0 && cur.costCells.every((s) => s.startsWith("¥")) &&
+                cur.tape.startsWith("¥") && cur.price.includes("¥") && !cur.dollars.length;
+  console.log("=== 币种（人民币唯一口径）===");
+  console.log("  明细表消耗列 :", cur.costCells.join(" / ") || "—");
+  console.log("  总览 7 日消耗 :", cur.tape, "  首选单价:", cur.price);
+  console.log("  残留美元符号 :", cur.dollars.length ? cur.dollars : "无", curOk ? "✓" : "✗");
 
   await page.screenshot({ path: "shot_unified_light.png", fullPage: true });
   await page.evaluate(() => localStorage.setItem("tokenwatch-theme", "dark"));
@@ -242,7 +256,7 @@ function mkModelDays(models, seed) {
                res.cards.some((c) => /官网实时/.test(c.src || "")) &&
                res.cards.some((c) => /套餐额度/.test(c.src || "")) &&
                res.bars > 0 && consistOk && !res.hasViewSeg && !res.leak.length &&
-               priceOk && !errors.length && !overflow.length;
+               priceOk && curOk && !errors.length && !overflow.length;
   console.log("\n结果:", pass ? "PASS" : "FAIL");
   await browser.close();
   process.exit(pass ? 0 : 1);

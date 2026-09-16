@@ -138,7 +138,7 @@
           <tr data-page-node-id="96hVz54b8WNLKPRvzlH2ZT">
             <th data-page-node-id="m6AUNlOLCQmCIFfPc8e7Im">API / 平台</th><th data-page-node-id="lGuzAqGxIoPWRAb4tdYsel">用量来源</th><th class="num" data-page-node-id="ZaBykk6ZB8UJo3MiLTnq7S">请求数</th>
             <th class="num" data-page-node-id="csKZYzAxOFE732DVh0GxUH">输入 token</th><th class="num" data-page-node-id="DNVJ0P8lKL1uIvGYC2cPEX">输出 token</th>
-            <th class="num" data-page-node-id="AyNEsRe2YHhnYdhAQkVDCe">缓存读 token</th><th class="num" data-page-node-id="NCWGNnej6qu2KVNdgEfep3">消耗 USD</th>
+            <th class="num" data-page-node-id="AyNEsRe2YHhnYdhAQkVDCe">缓存读 token</th><th class="num" data-page-node-id="NCWGNnej6qu2KVNdgEfep3">消耗</th>
             <th class="num" data-page-node-id="KuBB0kxrI8t3EabHxWcbpN">占比</th><th class="num" data-page-node-id="mwrFiBVf3bnlbCJKMWBTzB">最后活跃</th>
           </tr>
         </thead>
@@ -150,7 +150,7 @@
 
   <footer class="foot" data-page-node-id="THVHwHo4H5pGtCjbDG8lT5">
     <p data-page-node-id="lx8xAmC7STD55PAN64AgRL"><b data-page-node-id="bruMx7sNS2KFytHFoslTbW">数据来源：</b>余额与用量均尽量取自各平台官方接口（用你的网页登录态直连供应商控制台，即账户实际扣费口径）；官网未接通或该平台不提供明细时，自动回落为该提供商的 <strong>CC Switch 本地记录</strong>，两者在同一个视图里合成展示、逐家标注来源。<strong>只统计已在 CC Switch 中接入的提供商</strong>，未接入通道（例如 Codex 直连的 gpt 系列）的用量不会出现在本页。平台凭据只保存在本机应用数据目录的 <code data-page-node-id="pcredFile">platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
-    <p data-page-node-id="iOeJUV38RZIYvIduKFs5BS"><b data-page-node-id="fZVarIdVwJSzhaTsgCTAZk">说明：</b>「当前时段与性价比推荐」里的价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），该配比可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算，汇率 ¥1≈$<span id="fxRate" data-page-node-id="0eOm7g7CgrG6zRzXj0oZof">7.10</span> 仅供参考。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
+    <p data-page-node-id="iOeJUV38RZIYvIduKFs5BS"><b data-page-node-id="fZVarIdVwJSzhaTsgCTAZk">说明：</b>「当前时段与性价比推荐」里的价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），该配比可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算。<strong>页面所有金额都是人民币</strong>：三家官网本来返回人民币；只有 CC Switch 本地记录是美元计价，已按 ¥<span id="fxRate" data-page-node-id="0eOm7g7CgrG6zRzXj0oZof">7.10</span>/USD 折成人民币（可在 <code>config.json</code> 的 <code>usd_cny</code> 里改汇率）。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
   </footer>
 </main>
 

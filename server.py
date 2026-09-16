@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
     "low_balance_cny": 30.0,          # 全局默认阈值：余额低于该值（元）时高亮预警
     "low_balance_by_provider": {},    # 按提供商单独设阈值：{"DeepSeek": 20, "Kimi": 50}
     "days_default": "month",          # 默认统计范围键：today/d3/week/month/h180/y365
-    "usd_cny": 7.10,                  # 估算用汇率
+    "usd_cny": 7.10,                  # 美元→人民币汇率（CC Switch 本地记录是美元计价，折成人民币）
     "recharge_urls": {},              # key: 提供商名 → 充值页 URL（可覆盖）
     # 折算「综合单价」（元/百万 tokens）用的典型配比，用于跨模型比价与当前时段推荐。
     # 默认取编程长会话的常见形态：上下文缓存命中率高、输出占比小。
@@ -239,6 +239,9 @@ def collect_usage(provs, days):
     start_d = days_ago_str(days)
     today0 = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     start_ts = int((today0 - datetime.timedelta(days=days)).timestamp())
+    # CC Switch 的 total_cost_usd / model_pricing 都是美元计价，
+    # 而本工具对外只用人民币一种口径，所以入库前统一乘汇率折成人民币。
+    rate = _usd_cny()
 
     empty = {"requests": 0, "success": 0, "input": 0, "output": 0,
              "cache_read": 0, "cache_creation": 0, "cost": 0.0}
@@ -268,7 +271,7 @@ def collect_usage(provs, days):
             e["cache_read"] += int(d.get("cache_read_tokens") or 0)
             e["cache_creation"] += int(d.get("cache_creation_tokens") or 0)
             try:
-                e["cost"] += float(d.get("total_cost_usd") or 0)
+                e["cost"] += float(d.get("total_cost_usd") or 0) * rate
             except Exception:
                 pass
         # 日报表（补足日志缺失的历史日期）
@@ -296,7 +299,7 @@ def collect_usage(provs, days):
             e["cache_read"] += int(d.get("cache_read_tokens") or 0)
             e["cache_creation"] += int(d.get("cache_creation_tokens") or 0)
             try:
-                e["cost"] += float(d.get("total_cost_usd") or 0)
+                e["cost"] += float(d.get("total_cost_usd") or 0) * rate
             except Exception:
                 pass
         conn.close()
@@ -583,19 +586,20 @@ def price_lookup():
 
 
 def estimate_tokens(provider, prov_usage, price_map):
-    """用近 N 天实际用量混合单价折算剩余金额≈可用 token"""
+    """用近 N 天实际用量混合单价折算剩余金额≈可用 token（单位：人民币 / 百万 token）"""
     t = prov_usage.get("totals") or {}
     total_tok = t.get("input", 0) + t.get("output", 0) + t.get("cache_read", 0) + t.get("cache_creation", 0)
     cost = t.get("cost", 0) or 0
     if total_tok > 0 and cost > 0:
-        blended = cost / total_tok * 1e6
+        blended = cost / total_tok * 1e6        # cost 已是人民币口径
         source = "实际用量"
-    else:  # 无本地记录：按配置模型的官方标价平均
-        prices = [price_map.get(m) for m in provider["models"] if m in price_map]
+    else:  # 无本地记录：按配置模型的官方标价平均（CC Switch 表里存的是美元，折成人民币）
+        rate = _usd_cny()
+        prices = [price_map[m] for m in provider["models"] if m in price_map]
         if prices:
-            blended = sum((a + b) / 2 for a, b in prices) / len(prices)
+            blended = sum((a + b) / 2 for a, b in prices) / len(prices) * rate
         else:
-            blended = 1.0
+            blended = rate
         source = "模型标价"
     return blended, source
 
@@ -984,17 +988,23 @@ def _usd_cny():
         return 7.1
 
 
-def _to_usd(shape, currency="CNY"):
-    """官网金额是人民币，而前端整条链路（趋势图 / 总览带 / 模型表 / 用量条）都是美元口径，
-    这里统一折算，并把原始人民币金额留在 totals.cost_native 供界面标注。"""
+def _to_cny(shape, currency="CNY"):
+    """把一份用量 shape 的金额统一成人民币口径。
+
+    三家官网（DeepSeek / Kimi / 智谱）返回的本来就是人民币，此时不改数值，
+    只打上 currency 标记；万一某家改版返回美元，才按配置汇率折算。
+    界面上下所有金额（趋势图 / 总览带 / 明细表 / 用量条 / 余额 / 估算）都以人民币呈现，
+    唯一带美元原值的是 CC Switch 本地记录，已在 collect_usage 里折好。
+    """
     rate = _usd_cny()
-    if currency != "CNY" or rate <= 0:
+    shape["currency"] = "CNY"
+    if currency != "USD" or rate <= 0:
         return shape
 
     def conv(rec):
         if isinstance(rec, dict) and rec.get("cost") is not None:
             try:
-                rec["cost"] = round(float(rec["cost"]) / rate, 6)
+                rec["cost"] = round(float(rec["cost"]) * rate, 6)
             except Exception:
                 pass
 
@@ -1005,15 +1015,7 @@ def _to_usd(shape, currency="CNY"):
             conv(rec)
     for m in shape.get("models") or []:
         conv(m)
-    tot = shape.get("totals") or {}
-    try:
-        native = float(tot.get("cost") or 0)
-    except Exception:
-        native = 0.0
-    conv(tot)
-    if isinstance(tot, dict):
-        tot["cost_native"] = round(native, 6)
-    shape["currency"] = currency
+    conv(shape.get("totals") or {})
     shape["fx"] = rate
     return shape
 
@@ -1064,7 +1066,7 @@ def pu_deepseek(cred, days):
     if not shape:
         return {"status": "empty", "detail": last_err or "该时间区间内平台侧没有用量记录"}
     return {"status": "ok", "mode": "usage", "checked_at": now_iso(),
-            "source": "官网用量接口（by month）", **_to_usd(shape, "CNY")}
+            "source": "官网用量接口（by month）", **_to_cny(shape, "CNY")}
 
 
 def _build_platform_shape(tok_acc, cost_acc, days):
@@ -1278,7 +1280,7 @@ def pu_kimi(cred, days):
         totals["cost"] += m["cost"]
     totals["cost"] = round(totals["cost"], 6)
 
-    shape = _to_usd({"models": model_list, "days": by_day, "model_days": model_days,
+    shape = _to_cny({"models": model_list, "days": by_day, "model_days": model_days,
                      "totals": totals, "days_list": sorted(days_set)}, "CNY")
     return {"status": "ok", "mode": "usage", "cost_only": True,
             "checked_at": now_iso(), "refreshed": refreshed, "org": org,
@@ -1466,10 +1468,10 @@ def pu_zhipu(cred, days):
         if pack:
             out["resource_pack"] = pack
         return out
-    shape = _to_usd(shape, "CNY")
+    shape = _to_cny(shape, "CNY")
     if list_price > 0:
-        # 与 cost_native（实扣）同为人民币口径，供界面披露「官网计价 / 抵扣」差额
-        shape["totals"]["cost_list"] = round(float(shape["totals"].get("cost_native") or 0)
+        # cost_list = 官网计价（含被资源包/免费额度抵扣掉的部分），与实扣 cost 同为人民币口径
+        shape["totals"]["cost_list"] = round(float(shape["totals"].get("cost") or 0)
                                              + list_price, 6)
     out = {"status": "ok", "mode": "usage", "no_requests": True, "checked_at": now_iso(),
            "source": "官网费用账单（expenseBillList）", "bill_rows": rows_n, **shape}
@@ -1766,23 +1768,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 balances = balances_all(provs, force=provider_changed(provs))
                 price_map = price_lookup()
                 out_providers = []
-                total = {"cny": 0.0, "usd": 0.0, "plan": 0}
+                rate = _usd_cny()
+                total = {"cny": 0.0, "plan": 0}
                 for p in provs:
                     po = usage["per_provider"].get(p["id"])
                     item = {k: v for k, v in p.items() if not k.startswith("_")}
                     item["usage"] = po if po else None
                     item["balance"] = balances.get(p["id"]) or {"status": "error", "detail": "未查询"}
-                    # 估算
+                    # 估算（人民币 / 百万 token）
                     blended, bsrc = estimate_tokens(p, po or {"totals": {}}, price_map)
-                    item["est"] = {"blended_usd_per_m": round(blended, 4), "blend_source": bsrc}
+                    item["est"] = {"blended_cny_per_m": round(blended, 4), "blend_source": bsrc}
                     if item["balance"].get("status") == "ok":
                         b = item["balance"]
                         if b.get("type") == "money":
                             for it in b.get("items") or []:
-                                if it["currency"] == "CNY":
-                                    total["cny"] += it["total"]
-                                else:
-                                    total["usd"] += it["total"]
+                                # 余额统一折成人民币（三家官网本来就返回 CNY，这里是兜底）
+                                total["cny"] += it["total"] * (1 if it["currency"] == "CNY" else rate)
                         else:
                             total["plan"] += 1
                     out_providers.append(item)

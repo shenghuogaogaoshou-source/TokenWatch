@@ -48,6 +48,7 @@ const OUT = [];
   const bars = await page.$$eval('#trendChart rect.bar, #trendChart rect[class*="bar"]', (n) => n.length).catch(() => 0);
   const legend = await page.textContent('#legend').catch(() => '');
   const tableNote = await page.textContent('#tableNote').catch(() => '');
+  const tapeCost = (await page.textContent('#tapeCost7V').catch(() => '') || '').trim();
   const nProvApi = await page.evaluate(async () => {
     const r = await fetch('/api/data', { cache: 'no-store' });
     const j = await r.json();
@@ -84,6 +85,20 @@ const OUT = [];
   add('Kimi 用量条收成 3 格', cards.some((c) => /Kimi/.test(c.name) && (c.cols.match(/px/g) || []).length === 3),
       cards.map((c) => c.name + ':' + (c.cols.match(/px/g) || []).length).join(' '));
   add('官网卡片披露人民币原值', /官网实扣 ¥|官网计价 ¥/.test(cards.map((c) => c.stripSrc).join(' ')), '-');
+  /* —— 币种：全站唯一口径是人民币，任何位置都不该再出现 $ —— */
+  const moneyTexts = [
+    ...cards.map((c) => c.stripSrc + ' ' + c.stats.map((s) => s.k + '=' + s.v).join(' ')),
+    ...rows.flatMap((r) => r.cells),
+    ...bal.map((b) => b.text),
+    tapeCost, tableNote,
+  ];
+  const dollarLeak = moneyTexts.filter((s) => /\$/.test(String(s)));
+  add('全站金额只用人民币（无 $ 残留）', dollarLeak.length === 0,
+      dollarLeak.slice(0, 2).map((s) => String(s).slice(0, 60)).join(' | ') || '-');
+  add('总览带消耗以 ¥ 开头', /^¥/.test(tapeCost), tapeCost);
+  add('明细表消耗列以 ¥ 开头（或 —）',
+      rows.length > 0 && rows.every((r) => /^¥/.test(r.cells[6] || '') || (r.cells[6] || '') === '—'),
+      rows.map((r) => r.cells[6]).join(' / '));
   add('模型表出现「金额口径」标记', rows.some((r) => r.tag === '金额口径'), '-');
   add('标记行的 token 列显示 — 而非 0',
       rows.filter((r) => r.tag === '金额口径').every((r) => r.cells[2] === '—'), '-');

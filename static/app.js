@@ -25,14 +25,15 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 /* ---------- 格式化 ---------- */
+/* 全站只有人民币一种金额口径：三家官网本来返回 CNY；
+   CC Switch 本地记录是美元计价，已在服务端按 usd_cny 折成人民币。 */
 const N = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
-function money(v, cur) {
-  const sym = cur === "CNY" ? "¥" : "$";
-  let s;
-  if (v >= 10000) s = N.format(Math.round(v)) ;
-  else if (v >= 100) s = v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  else s = v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return sym + s;
+function money(v) {
+  v = v || 0;
+  const s = v >= 10000
+    ? N.format(Math.round(v))
+    : v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return "¥" + s;
 }
 function compactTok(v) {
   if (v == null || isNaN(v)) return "0";
@@ -44,11 +45,11 @@ function compactTok(v) {
 function fullNum(v) {
   return (v || 0).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
-/* 美元金额：≥1 保留 2 位，<1 保留 4 位（小额成本可读） */
-function fmtUSD(v) {
+/* 人民币金额：≥1 保留 2 位，<1 保留 4 位（小额成本可读） */
+function fmtCNY(v) {
   v = v || 0;
   const d = Math.abs(v) >= 1 ? 2 : 4;
-  return "$" + v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return "¥" + v.toLocaleString("zh-CN", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 /* 本地时区的 YYYY-MM-DD（toISOString 是 UTC，东八区凌晨会差一天） */
 function localISO(offset) {
@@ -420,14 +421,13 @@ function renderTape() {
     }
   }
   const fx = (state.cfg && state.cfg.usd_cny) || 7.1;
-  const totalCny = cny + usd * fx;
+  const totalCny = cny + usd * fx;      // 万一某家只返回美元余额，折成人民币后并入总额
   if (totalCny > 0) {
-    $("#tapeBalanceV").textContent = money(totalCny, "CNY");
+    $("#tapeBalanceV").textContent = money(totalCny);
     $("#tapeBalanceF").textContent =
-      (cny ? "人民币 " + money(cny, "CNY") : "") +
-      (cny && usd ? " + " : "") +
-      (usd ? "美元 " + money(usd, "USD") + "（按 ¥" + fx + " 折算）" : "") +
-      (planN ? (cny || usd ? "，另有 " : "") + planN + " 个订阅套餐" : "");
+      "可用余额合计" +
+      (usd ? "（含按 ¥" + fx + "/USD 折算的美元余额）" : "") +
+      (planN ? "，另有 " + planN + " 个订阅套餐" : "");
   } else if (planN) {
     $("#tapeBalanceV").textContent = planN + " 个";
     $("#tapeBalanceF").textContent = "订阅制套餐（智谱 GLM Coding Plan）额度见卡片";
@@ -444,12 +444,14 @@ function renderTape() {
       ? (t7.localN || t7.req ? "官网 " + t7.platN + " 家实扣口径" : "官网实扣口径")
       : "本地记录";
   }
-  $("#tapeCost7V").textContent = "$" + (t7.cost || 0).toLocaleString("en-US",
-    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const cnyEl = $("#tapeCost7Cny");
-  if (cnyEl) {
-    cnyEl.textContent = (t7.cost > 0)
-      ? "≈ " + money(t7.cost * fx, "CNY") + "（按 ¥" + fx + " 折算）"
+  $("#tapeCost7V").textContent = money(t7.cost || 0);
+  const altEl = $("#tapeCost7Cny");
+  if (altEl) {
+    /* 主数字已经是人民币，这一行只交代口径：有没有掺本地记录、掺的那部分怎么来的 */
+    altEl.textContent = t7.cost > 0
+      ? (t7.localN
+          ? "含 " + t7.localN + " 家本地记录（原为美元，按 ¥" + fx + "/USD 折算）"
+          : "全部为官网账户实际扣费口径")
       : (anyPlat ? "官网侧近 7 天暂无消耗记录" : "暂无消耗记录");
   }
   const srcF = t7.platN
@@ -691,27 +693,24 @@ function buildCard(p, i) {
   if (costOnly) strip.classList.add("cost-only");
   strip.innerHTML = costOnly
     ? mk("请求", "—") +
-      mk("消耗 USD", fmtUSD(tt.cost)) +
+      mk("消耗", fmtCNY(tt.cost)) +
       `<div class="ustat dim"><span class="u-k">官网口径</span><span class="u-v">仅金额</span></div>`
     : mk("请求", noReq ? "—" : fullNum(tt.requests)) +
       mk("输入 tok", compactTok(tt.input)) +
       mk("输出 tok", compactTok(tt.output)) +
-      mk("消耗 USD", fmtUSD(tt.cost));
+      mk("消耗", fmtCNY(tt.cost));
   const stripWrap = el("div", "usage-wrap");
   if (su.src === "platform") {
     const pr = su.platform || {};
-    const nat = pr.totals && pr.totals.cost_native;     // 官网实扣（结算金额），与官网页面一致
-    const list = pr.totals && pr.totals.cost_list;      // 官网计价（含被资源包抵扣掉的部分）
-    const fxr = pr.fx || (state.cfg && state.cfg.usd_cny) || 7.1;
+    const nat = pr.totals && pr.totals.cost;            // 官网实扣（结算金额），与官网账单页一致
+    const list = pr.totals && pr.totals.cost_list;      // 官网计价（含被资源包/免费额度抵扣掉的部分）
     let natTxt = "";
-    if (pr.currency === "CNY" && (nat > 0 || list > 0)) {
-      if (nat > 0) {
-        const cut = list > nat
-          ? `；官网计价 ${money(list, "CNY")}，资源包/免费额度已抵扣 ${money(list - nat, "CNY")}` : "";
-        natTxt = ` ｜ 官网实扣 ${money(nat, "CNY")}（按 ¥${fxr}/USD 折算${cut}）`;
-      } else {
-        natTxt = ` ｜ 本区间全部由资源包/免费额度抵扣（官网计价 ${money(list, "CNY")}）`;
-      }
+    if (nat > 0) {
+      const cut = list > nat
+        ? `；官网计价 ${money(list)}，资源包/免费额度已抵扣 ${money(list - nat)}` : "";
+      natTxt = ` ｜ 官网实扣 ${money(nat)}${cut}`;
+    } else if (list > 0) {
+      natTxt = ` ｜ 本区间全部由资源包/免费额度抵扣（官网计价 ${money(list)}）`;
     }
     stripWrap.appendChild(el("div", "strip-src",
       (costOnly ? "官网实时 · 账户实际扣费口径（该平台仅提供金额）"
@@ -727,8 +726,10 @@ function buildCard(p, i) {
       : st === "expired" ? "官网凭据失效 · 本地记录"
       : st === "error" ? "官网读取失败 · 本地记录"
       : "官网本区间无用量 · 按 0 计";
+    const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
     stripWrap.appendChild(el("div", "strip-src muted",
-      why + (st === "error" && det ? "（" + String(det).slice(0, 60) + "）" : "")));
+      why + (st === "error" && det ? "（" + String(det).slice(0, 60) + "）" : "") +
+      " ｜ 本地记录原为美元，已按 ¥" + fxr + "/USD 折算"));
   }
   stripWrap.appendChild(strip);
   card.appendChild(stripWrap);
@@ -779,7 +780,9 @@ function buildBalance(p, b) {
     if (b.type === "money") {
       const main = mainMoney(b);
       const fx = (state.cfg && state.cfg.usd_cny) || 7.1;
-      const cnyTotal = (b.items || []).reduce((s, it) => s + (it.currency === "CNY" ? it.total : it.total * fx), 0);
+      /* 余额也统一成人民币（三家官网本来就返回 CNY，这里是兜底） */
+      const cnyOf = (it) => (it.currency === "CNY" ? it.total : it.total * fx);
+      const cnyTotal = (b.items || []).reduce((s, it) => s + cnyOf(it), 0);
       const low = lowFor(p.name);
       const lowFlag = low > 0 && cnyTotal < low && cnyTotal > 0;
       const perProv = !!((state.cfg && state.cfg.low_balance_by_provider) || {})[p.name];
@@ -788,15 +791,14 @@ function buildBalance(p, b) {
       box.innerHTML = `
         <div class="bal-label">可用余额 <span class="err-tag" ${b.available ? 'style="display:none"' : ""}>⚠ 余额可能不足</span>${
           lowFlag ? `<span class="low-tag" title="${perProv ? "该提供商单独设置的预警阈值" : "全局预警阈值"}">低于预警 ¥${low}</span>` : ""}</div>
-        <div class="bal-val${lowFlag ? " warn" : ""}">${money(main.total, main.currency)}<small>${main.currency === "CNY" ? "CNY" : "USD"}</small></div>`;
+        <div class="bal-val${lowFlag ? " warn" : ""}">${money(cnyOf(main))}<small>CNY</small></div>`;
       div.appendChild(box);
       const pills = el("div", "bal-pills");
       for (const it of b.items || []) {
-        const c = it.currency === "CNY" ? "¥" : "$";
         pills.appendChild(el("span", "pill",
-          `${c} 充值 <b>${c === "¥" ? money(it.topped_up, "CNY").slice(1) : it.topped_up.toFixed(2)}</b>` +
-          (it.granted > 0 ? ` · 赠送 <b>${c === "¥" ? money(it.granted, "CNY").slice(1) : it.granted.toFixed(2)}</b>` : "") +
-          (it.currency === "CNY" ? "" : " USD")));
+          `¥ 充值 <b>${money(it.topped_up).slice(1)}</b>` +
+          (it.granted > 0 ? ` · 赠送 <b>${money(it.granted).slice(1)}</b>` : "") +
+          (it.currency === "CNY" ? "" : "（原为美元，已折人民币）")));
       }
       div.appendChild(pills);
       wrap.appendChild(div);
@@ -811,19 +813,18 @@ function buildBalance(p, b) {
       }
       if (b.spent_yuan != null) {
         const sl = el("div", "est-line");
-        sl.innerHTML = `官网累计消费 <b>${money(b.spent_yuan, "CNY")}</b>` +
-          (b.spent_today_yuan > 0 ? ` <span class="src">今日 ${money(b.spent_today_yuan, "CNY")}</span>` : "");
+        sl.innerHTML = `官网累计消费 <b>${money(b.spent_yuan)}</b>` +
+          (b.spent_today_yuan > 0 ? ` <span class="src">今日 ${money(b.spent_today_yuan)}</span>` : "");
         wrap.appendChild(sl);
       }
-      /* 估算可用 token */
+      /* 估算可用 token（人民币余额 ÷ 人民币单价） */
       if (p.est) {
-        const fx2 = fx;
-        const totalCny2 = cnyTotal;
-        if (totalCny2 > 0 && p.est.blended_usd_per_m > 0) {
-          const estTok = totalCny2 / fx2 / p.est.blended_usd_per_m * 1e6;
+        const perM = p.est.blended_cny_per_m;
+        if (cnyTotal > 0 && perM > 0) {
+          const estTok = cnyTotal / perM * 1e6;
           const line = el("div", "est-line");
           line.innerHTML = `≈ <b>${compactTok(estTok)} tokens</b> 可调用
-            <span class="src">按 ${p.est.blend_source || "标价"} $${p.est.blended_usd_per_m}/1M</span>`;
+            <span class="src">按 ${p.est.blend_source || "标价"} ¥${perM}/1M</span>`;
           wrap.appendChild(line);
         }
       }
@@ -923,8 +924,6 @@ function renderDetail() {
   const nLocal = allProvs.length - nPlat - nEmpty;
   const nModels = allProvs.reduce((s, x) => s + ((x.usage.models || []).length), 0);
   const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
-  const anyCny = Object.values((state.platform && state.platform.usage) || {})
-    .some((r) => r && r.status === "ok" && r.currency === "CNY");
   const anyCostOnly = allProvs.some((p) => p.usage && p.usage.costOnly);
   const anyNoReq = allProvs.some((p) => p.usage && p.usage.noRequests && !p.usage.costOnly);
 
@@ -934,9 +933,9 @@ function renderDetail() {
     noteText: allProvs.length
       ? `范围：${rangeText()} · 逐家判定：${nPlat} 家取官网实际扣费口径` +
         (nLocal ? `，${nLocal} 家官网未接通、回落本机 CC Switch 记录（估算口径）` : "") +
-        (anyCny ? `；官网人民币金额已按 ¥${fxr}/USD 折算` : "") +
         (anyCostOnly ? "；带「金额口径」的平台官网只开放消费金额，不提供 token / 请求数" : "") +
         (anyNoReq ? "；带「无请求数」的平台官网账单不提供请求数，仅有 token 与金额" : "") +
+        `；金额统一为人民币口径，CC Switch 本地记录原为美元、已按 ¥${fxr}/USD 折算` +
         (zeroN
           ? `；${zeroN} 家在本区间内没有用量，按 0 计` +
             (nEmpty === zeroN ? "（官网均已接通）" : nEmpty ? `（其中 ${nEmpty} 家官网已接通）` : "")
@@ -1209,7 +1208,7 @@ function renderChart(provs, opts) {
   for (let t = 0; t <= 4; t++) {
     const y = padT + ih - (ih * t) / 4;
     g += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="gline"/>`;
-    const lab = isTok ? compactTok(ymax * t / 4) : "$" + (ymax * t / 4).toFixed(ymax < 10 ? 3 : 1);
+    const lab = isTok ? compactTok(ymax * t / 4) : "¥" + (ymax * t / 4).toFixed(ymax < 10 ? 3 : 1);
     g += `<text x="${padL + 4}" y="${y - 4}" class="glab">${lab}</text>`;
   }
   const step = Math.max(1, Math.ceil(n / 26));
@@ -1315,9 +1314,11 @@ function renderApiTable(provs, opts) {
   for (const r of rows) {
     tot.req += r.req; tot.inp += r.inp; tot.out += r.out; tot.cache += r.cache; tot.cost += r.cost;
     const pct = (r.cost / sumCost) * 100;
-    const localTitle = r.why === "empty"
+    const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
+    const localTitle = (r.why === "empty"
       ? "该家官网接口已接通，但本统计区间内官网没有用量记录，此处回落本机 CC Switch 记录（通常为 0）"
-      : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）";
+      : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）") +
+      "；本地记录原为美元，已按 ¥" + fxr + "/USD 折算";
     const srcTag = r.src === "platform"
       ? `<span class="src-tag plat" title="取自该平台官网接口，账户实际扣费口径">官网实扣</span>`
       : `<span class="src-tag local" title="${localTitle}">本地记录</span>`;
@@ -1333,7 +1334,7 @@ function renderApiTable(provs, opts) {
       ${cell(!r.costOnly, r.inp)}
       ${cell(!r.costOnly, r.out)}
       ${cell(!r.costOnly, r.cache)}
-      <td class="num cost">${fmtUSD(r.cost)}</td>
+      <td class="num cost">${fmtCNY(r.cost)}</td>
       <td class="num">${pct.toFixed(1)}%<span class="bar-mini"><i style="width:${Math.min(100, pct)}%;background:${r.acc}"></i></span></td>
       <td class="num dim">${r.last ? esc(r.last.slice(5)) : "—"}</td>`;
     tbody.appendChild(tr);
@@ -1347,7 +1348,7 @@ function renderApiTable(provs, opts) {
     ${cell(anyTok, tot.inp)}
     ${cell(anyTok, tot.out)}
     ${cell(anyTok, tot.cache)}
-    <td class="num cost">${fmtUSD(tot.cost)}</td>
+    <td class="num cost">${fmtCNY(tot.cost)}</td>
     <td class="num">100.0%</td>
     <td class="num dim">—</td>`;
   tbody.appendChild(trT);
@@ -1549,7 +1550,7 @@ async function testPlatform(kind, block, resEl, btn) {
       resEl.textContent = r.mode === "quota"
         ? "连接成功 · 读到 " + (r.windows || []).length + " 个额度窗口"
         : "连接成功 · " + (r.models || []).length + " 个模型 · " +
-          fmtUSD((r.totals && r.totals.cost) || 0) + " 消耗";
+          fmtCNY((r.totals && r.totals.cost) || 0) + " 消耗";
     } else {
       resEl.className = "pf-res err";
       resEl.textContent = r.detail || "测试失败";
