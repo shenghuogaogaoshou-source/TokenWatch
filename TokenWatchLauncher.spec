@@ -4,6 +4,9 @@
 路径用 SPECPATH 推导，不要写死本机绝对路径。
 用法：
     pyinstaller --noconfirm TokenWatchLauncher.spec
+产物 dist/TokenWatchLauncher.exe 是瘦启动器，可复制到桌面等任意位置；
+它靠 %APPDATA%\\TokenWatch\\install_path.txt 定位真正的 TokenWatch.exe，
+该文件由「打包桌面版.bat」在打包成功后写入 —— 所以要先打主程序，再打启动器。
 """
 import os
 

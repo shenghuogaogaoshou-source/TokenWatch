@@ -20,7 +20,8 @@ TokenWatch 的做法是**逐家判定**：
 | 该家官网接口状态 | 用量数据取自 |
 | --- | --- |
 | 拿到真实账单 / 用量（`ok`） | **官网实际扣费口径**，卡片上标注「官网实时」 |
-| 未配置凭据 / 票据失效 / 区间内无数据 | **回落该家的 CC Switch 本地记录**，并写明回落原因 |
+| 未配置凭据 / 票据失效 | **回落该家的 CC Switch 本地记录**，并写明回落原因 |
+| 官网已接通、但**该区间内没有用量** | 不回落本地记录，**直接按 0 计**，表注写明「官网均已接通」——不当故障、不弹红字 |
 
 两套口径在同一个视图里合成展示、逐家标注来源，不给你留一个「这里到底算的谁」的疑问。
 
@@ -33,12 +34,13 @@ TokenWatch 的做法是**逐家判定**：
 | 用量（官网真实） | DeepSeek / Kimi / 智谱 GLM 直连控制台接口取真实用量；按天、按模型、含输入/输出/缓存 Token 拆分 |
 | 用量（本地兜底） | 官网未接通时回落 CC Switch 的 `proxy_request_logs` / `usage_daily_rollups`；这两张表按美元计价，已按 `usd_cny` 折成人民币再计入 |
 | 金额口径 | **全站只用人民币（¥）**。官网数据原样展示；本地记录折人民币后展示，并在卡片上标注折算来源 |
-| 趋势图 | 今天 / 3 天 / 本周 / 本月 / 半年 / 全年区间，金额（¥）与 Token 两种口径切换，按提供商或按模型两种维度 |
+| 趋势图 | 今天 / 3 天 / 本周 / 本月 / 半年 / 全年区间，**消耗金额（¥）** 与 **Tokens** 两种口径切换，按提供商堆叠对比 |
+| 用量明细表 | **一行一家 API / 平台**：请求数、输入 / 输出 / 缓存 Token、消耗金额（¥）、占比、最近有量日期；表注写明本区间的口径组合与折算来源 |
 | **分时段定价** | 内置各家官网当前价（DeepSeek 峰谷、智谱 / Kimi 全天同价），算出「综合单价 元/百万 tokens」，直接给出**当前时段性价比最高的模型**与备选 |
 | 账户余额 | DeepSeek `/user/balance`、Kimi `/v1/users/me/balance`、智谱账户报表（余额 / 累计充值 / 累计消费） |
 | 资源包余量 | 智谱费用账单里的 `deductAfter`，显示通用模型推理资源包剩余 Token |
 | Token 折算 | 按近 N 天实际用量混合单价，把剩余金额折算成「≈ 还能调用多少 Token」 |
-| 订阅额度 | 智谱 GLM 走 Coding Plan 时显示套餐等级与额度窗口（5 小时 / 本周）剩余百分比 |
+| 订阅额度 | 智谱 GLM 走 Coding Plan 时显示套餐等级与额度窗口（5 小时 / 本周 / 本月）剩余百分比 |
 | **票据有效期** | 标注网页登录凭据的到期时间（Kimi 读 JWT `exp`；智谱无 `exp` 按经验有效期估算并标「估算」；DeepSeek 视为长期有效）；≤ 7 天给提醒，≤ 2 天转红并推荐优先处理 |
 | **余额预警阈值** | 全局一个默认值，**也能按提供商单独设**（留空即回落默认） |
 | 充值跳转 | 每张卡片「前往充值 ↗」直达官方充值页，地址可在设置里覆盖 |
@@ -57,18 +59,10 @@ TokenWatch 的做法是**逐家判定**：
 
 ## 快速开始
 
-### 方式一：直接用打包好的桌面版
+> `dist/`、`build/`、`shots/` 都在 `.gitignore` 里，**不进仓库** —— 所以 clone 下来只有源码。
+> 想用桌面版请先按「方式二」自己打包一次。
 
-```bat
-dist\TokenWatch\TokenWatch.exe
-```
-
-双击即可。运行 `创建桌面快捷方式.bat` 可以在桌面生成图标。
-
-> 窗口用的是系统自带 Edge 的**应用模式**（无地址栏、无标签页），观感与原生应用一致，不需要额外装任何东西。
-> 关闭窗口程序即自动退出；若已有一个实例在运行，再次双击只会再开一个窗口。
-
-### 方式二：从源码运行
+### 方式一：从源码运行（clone 后即可用）
 
 ```bat
 启动监控台.bat
@@ -82,21 +76,40 @@ python server.py            # 默认 http://127.0.0.1:8733
 
 **不需要 `pip install` 任何东西** —— 后端是纯标准库。
 
-### 重新打包桌面版
+### 方式二：打包成桌面应用
 
 ```bat
 打包桌面版.bat
 ```
 
-或手动（需要 PyInstaller，图标相关脚本另需 Pillow）：
+脚本会依次：结束正在运行的实例 → 清掉旧的 `build\TokenWatch` 与 `dist\TokenWatch` →
+跑 PyInstaller（**不加 `--clean`**）→ 把安装路径写进 `%APPDATA%\TokenWatch\install_path.txt`。
+
+手动等价命令（需要 PyInstaller）：
 
 ```bash
 pip install pyinstaller
-rm -rf build/TokenWatch dist/TokenWatch   # 必须先删，否则 COLLECT 会去删已存在的输出目录而被拦下
+rm -rf build/TokenWatch                   # build 目录可以直接删
+mv dist/TokenWatch dist/TokenWatch_old    # dist 要先改名移走，别直接 rm：COLLECT 会去删已存在的输出目录，被安全删除机制拦下
 pyinstaller --noconfirm TokenWatch.spec   # 不要加 --clean
 ```
 
-产物在 `dist\TokenWatch\`。
+产物在 `dist\TokenWatch\`，双击 `TokenWatch.exe` 即可运行。
+
+> 窗口用的是系统自带 Edge 的**应用模式**（无地址栏、无标签页），观感与原生应用一致，不需要额外装任何东西。
+> 关闭窗口程序即自动退出；若已有一个实例在运行，再次双击只会再开一个窗口。
+
+**桌面图标**有两种做法，任选其一：
+
+| 做法 | 说明 |
+| --- | --- |
+| 打包启动器 `TokenWatchLauncher.exe` | 由 `tokenwatch_launcher.py`（`TokenWatchLauncher.spec`）单独打出的单文件 exe，可复制到任何位置。它按三级顺序查找真正的程序：同级 `TokenWatch\TokenWatch.exe` → 同级 `dist\TokenWatch\TokenWatch.exe` → `%APPDATA%\TokenWatch\install_path.txt` 里记录的路径 |
+| 运行 `创建桌面快捷方式.bat` | 在桌面生成指向 `dist\TokenWatch\TokenWatch.exe` 的 `.lnk`，要求 dist 仍在原位置 |
+
+> ⚠️ 用启动器方式时，**必须先成功跑过一次「打包桌面版.bat」** —— 它会把真实安装路径写进
+> `%APPDATA%\TokenWatch\install_path.txt`，启动器就是靠这个文件定位的；
+> 该文件缺失或路径写错时会弹窗提示「未找到 TokenWatch.exe」，而不是静默失败。
+> 只改前端不想重打包的话，把 `static/*` 覆盖到 `dist\TokenWatch\_internal\static\` 即可。
 
 ---
 
@@ -125,24 +138,30 @@ pyinstaller --noconfirm TokenWatch.spec   # 不要加 --clean
 
 ```
 cc-token-monitor/
-├─ desktop_app.py          桌面端入口（Edge 应用窗口模式，窗口关闭即退出）
-├─ server.py               本地服务 127.0.0.1 · CC Switch 只读 + 各平台官方接口
-├─ static/                 前端（index.html / styles.css / app.js，无外部依赖）
-├─ 启动监控台.bat           源码模式启动
-├─ 创建桌面快捷方式.bat      生成桌面图标
-├─ 打包桌面版.bat           重新打包 exe
-├─ TokenWatch.spec         PyInstaller 配置
-├─ tokenwatch.ico          应用图标
-├─ test_real.js            真实数据端到端验收（Playwright，不打桩）
-└─ test_unified.js         合成视图一致性回归（打桩版）
+├─ desktop_app.py            桌面端入口（Edge 应用窗口模式，窗口关闭即退出）
+├─ server.py                 本地服务 127.0.0.1 · CC Switch 只读 + 各平台官方接口
+├─ static/                   前端（index.html / styles.css / app.js / favicon.svg，无外部依赖）
+├─ tokenwatch_launcher.py    桌面启动器源码（定位并拉起真正的 exe）
+├─ 启动监控台.bat             源码模式启动
+├─ 创建桌面快捷方式.bat        在桌面生成指向 dist 的 .lnk
+├─ 打包桌面版.bat             重新打包 exe，并写入 install_path.txt
+├─ TokenWatch.spec           PyInstaller 配置（主程序，onedir）
+├─ TokenWatchLauncher.spec   PyInstaller 配置（启动器，单文件）
+├─ tokenwatch.ico            应用图标
+├─ test_real.js              真实数据端到端验收（Playwright，不打桩）
+├─ test_unified.js           合成视图一致性回归（打桩版）
+└─ shot_ui.js                界面截图（输出到 shots/）
 ```
+
+> `dist/`、`build/`、`shots/` 以及所有运行期配置都在 `.gitignore` 里，不进仓库。
 
 运行期文件（不进仓库）：
 
 | 路径 | 内容 |
 | --- | --- |
-| `%APPDATA%\TokenWatch\config.json` | 设置（端口、刷新间隔、阈值、充值地址） |
+| `%APPDATA%\TokenWatch\config.json` | 设置（端口、刷新间隔、阈值、默认统计范围、汇率、充值地址） |
 | `%APPDATA%\TokenWatch\platform_creds.json` | 平台登录凭据 |
+| `%APPDATA%\TokenWatch\install_path.txt` | 桌面启动器据此定位 `dist\TokenWatch\TokenWatch.exe`（由 `打包桌面版.bat` 打包成功后写入） |
 | `%APPDATA%\TokenWatch\tokenwatch.log` | 运行日志 |
 | `%APPDATA%\TokenWatch\edge-profile\` | 应用窗口专用的 Edge 配置目录 |
 

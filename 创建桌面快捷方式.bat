@@ -12,17 +12,13 @@ if not exist "%EXE%" (
 )
 
 powershell -NoProfile -Command ^
+  "$desk = [Environment]::GetFolderPath('Desktop');" ^
   "$ws = New-Object -ComObject WScript.Shell;" ^
-  "$sc = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\TokenWatch.lnk');" ^
+  "$sc = $ws.CreateShortcut($desk + '\TokenWatch.lnk');" ^
   "$sc.TargetPath = '%EXE%';" ^
   "$sc.WorkingDirectory = '%CD%\dist\TokenWatch';" ^
   "$sc.IconLocation = '%EXE%',0;" ^
   "$sc.Description = 'TokenWatch · CC Switch 用量监控台';" ^
-  "$sc.Save()"
-
-if exist "%USERPROFILE%\Desktop\TokenWatch.lnk" (
-  echo 已创建桌面快捷方式：TokenWatch.lnk（双击即可启动）
-) else (
-  echo 快捷方式可能已创建到其他位置，请检查桌面。
-)
+  "$sc.Save();" ^
+  "if (Test-Path ($desk + '\TokenWatch.lnk')) { Write-Host ('已创建桌面快捷方式：' + $desk + '\TokenWatch.lnk（双击即可启动）') } else { Write-Host '[警告] 快捷方式未创建成功，请手动检查。' }"
 pause

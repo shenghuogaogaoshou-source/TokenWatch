@@ -5,7 +5,9 @@
 用法：
     pyinstaller --noconfirm TokenWatch.spec
 注意：**不要加 --clean**（会去删已存在的 build/TokenWatch，被安全删除机制拦下）。
-重打包前请先手动删掉 build/TokenWatch 与 dist/TokenWatch。
+重打包前：build/TokenWatch 可以直接删；dist/TokenWatch 请**先改名移走**
+（COLLECT 会尝试删除已存在的输出目录，直接删会被安全删除机制拦下）。
+打完想要桌面图标，另见 tokenwatch_launcher.py / TokenWatchLauncher.spec（单文件启动器）。
 """
 import os
 
