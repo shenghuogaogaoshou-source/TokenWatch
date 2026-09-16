@@ -125,6 +125,26 @@ function mkModelDays(models, seed) {
     }));
     return {
       hasToggle: !!q("#srcSeg"),
+      hasViewSeg: !!q("#viewSeg"),
+      /* 未接入通道（gpt / Codex 直连）绝不该出现在页面正文里（页脚说明文字除外） */
+      leak: (() => {
+        const foot = q(".foot");
+        const body = document.body.innerText.replace(foot ? foot.innerText : "", "");
+        return body.match(/未归属|unmatched|gpt-|codex/gi) || [];
+      })(),
+      pricing: {
+        cards: [...document.querySelectorAll("#pricingPanel .price-card")].map((c) => ({
+          name: c.querySelector(".pr-head h3")?.textContent.trim(),
+          slot: c.querySelector(".pr-slot")?.textContent.trim(),
+          models: [...c.querySelectorAll(".pr-table tbody tr")].length,
+        })),
+        lead: q(".pl-tag")?.textContent.trim(),
+        first: q(".pl-name")?.textContent.trim(),
+        price: q(".pl-price")?.textContent.trim(),
+        alts: [...document.querySelectorAll(".pl-alt-i")].map((x) => x.textContent.trim().replace(/\s+/g, " ")),
+        asOf: q("#priceAsOfFoot")?.textContent.trim(),
+        mix: q("#priceMixFoot")?.textContent.trim(),
+      },
       badge: q("#srcBadge")?.textContent.trim(),
       hint: q("#srcHint")?.textContent.trim(),
       cred: q("#srcCredState")?.textContent.trim(),
@@ -175,16 +195,22 @@ function mkModelDays(models, seed) {
   res.platCards.forEach((c) => console.log(`  ${c.name} [${c.pill}]`));
   console.log("趋势图柱数         :", res.bars);
   console.log("图例               :", res.legend.join(" / "));
-  console.log("--- 模型表 ---");
+  console.log("--- 用量明细表（一行一家 API / 平台）---");
   res.rows.forEach((r) => console.log("  " + r.join(" | ")));
   console.log("表注               :", res.tableNote);
+  console.log("--- 分时段定价 + 推荐 ---");
+  console.log("  定价卡           :", res.pricing.cards.map((c) => `${c.name}[${c.slot}/${c.models}]`).join(" "));
+  console.log("  首选             :", `${res.pricing.lead} ${res.pricing.first} ${res.pricing.price}`);
+  console.log("  备选             :", res.pricing.alts.join(" | "));
+  console.log("  核实于 / 配比     :", res.pricing.asOf, "/", res.pricing.mix);
+  console.log("  未接入通道泄漏    :", res.leak.length ? res.leak : "无");
   console.log("控制台错误         :", errors.length ? errors : "无");
   console.log("文字溢出           :", overflow.length ? overflow : "无");
 
   // ---- 口径一致性：总览带 vs 趋势图（同样取近 7 天） ----
   const consist = await page.evaluate(() => {
     const t = unifiedTotals7();
-    const { dayMap } = seriesOfDay(mergedProviders(), false, true);
+    const { dayMap } = seriesOfDay(mergedProviders(), false);
     let chart7 = 0;
     for (let i = 0; i < 7; i++) {
       const d = localISO(i);
@@ -195,9 +221,16 @@ function mkModelDays(models, seed) {
   const diff = Math.abs(consist.tape - consist.chart);
   const consistOk = diff <= Math.max(0.02, consist.tape * 0.02);
 
+  const priceOk = res.pricing.cards.length >= 3 && !!res.pricing.lead &&
+                  /^\u00a5/.test(res.pricing.price || "") && res.pricing.asOf !== "\u2014" &&
+                  res.pricing.cards.every((c) => c.models > 0);
+  console.log("=== 分时段定价面板 ===");
+  console.log("  定价卡 / 首选 / 核实日期:", res.pricing.cards.length, "/", res.pricing.lead, "/", res.pricing.asOf,
+              priceOk ? "\u2713" : "\u2717");
+
   console.log("=== 口径一致性（近 7 日消耗）===");
   console.log(`  总览带 $${consist.tape.toFixed(2)} vs 趋势图 $${consist.chart.toFixed(2)}  偏差 $${diff.toFixed(4)}  ${consistOk ? "✓ 一致" : "✗ 不一致"}`);
-  console.log(`  官网覆盖 ${consist.platN} 家 · 本地兜底 ${consist.localN} 家 · 图例含未归属: ${/未归属/.test(res.legend.join(" ")) ? "✓" : "✗"}`);
+  console.log(`  官网覆盖 ${consist.platN} 家 · 本地兜底 ${consist.localN} 家 · 图例（逐家 API / 平台）: ${res.legend.join(" / ")}`);
 
   await page.screenshot({ path: "shot_unified_light.png", fullPage: true });
   await page.evaluate(() => localStorage.setItem("tokenwatch-theme", "dark"));
@@ -208,8 +241,8 @@ function mkModelDays(models, seed) {
   const pass = !res.hasToggle && /官网实时/.test(res.badge || "") &&
                res.cards.some((c) => /官网实时/.test(c.src || "")) &&
                res.cards.some((c) => /套餐额度/.test(c.src || "")) &&
-               res.bars > 0 && consistOk && /未归属/.test(res.legend.join(" ")) &&
-               !errors.length && !overflow.length;
+               res.bars > 0 && consistOk && !res.hasViewSeg && !res.leak.length &&
+               priceOk && !errors.length && !overflow.length;
   console.log("\n结果:", pass ? "PASS" : "FAIL");
   await browser.close();
   process.exit(pass ? 0 : 1);

@@ -2,14 +2,17 @@
 """
 TokenWatch · CC Switch 用量 / 余量 / 充值 监控台（本地服务端）
 ------------------------------------------------------------
-- 只读 CC Switch 数据库 (~/.cc-switch/cc-switch.db)，获取全部接入的提供商配置
-- 用量统计：读取 CC Switch 本地记录（proxy_request_logs + usage_daily_rollups）
-- 余额查询：直连各平台官方接口（DeepSeek / Kimi·Moonshot / 智谱 GLM Coding Plan）
+- 只读 CC Switch 数据库 (~/.cc-switch/cc-switch.db)，获取已接入的提供商配置
+- 用量明细：优先直连各平台官网接口（DeepSeek / Kimi / 智谱 GLM），
+  官网读不到时回落该提供商的 CC Switch 本地记录；归属不到已接入提供商的用量一律不计入
+- 余额查询：直连各平台官方接口
+- 分时段定价：内置各家官网当前价（含错峰时段），并给出当前时段性价比推荐
 - API Key 仅在本机内存中使用，绝不落盘、绝不下发前端
 - 绑定 127.0.0.1，仅本机可访问
 仅使用 Python 标准库，无第三方依赖。
 """
 import json, os, re, base64, sqlite3, socket, subprocess, sys, time, threading, datetime
+import concurrent.futures
 import http.server, socketserver, urllib.request, urllib.error
 
 if getattr(sys, "frozen", False):
@@ -29,9 +32,12 @@ DEFAULT_CONFIG = {
     "refresh_seconds": 300,
     "low_balance_cny": 30.0,          # 全局默认阈值：余额低于该值（元）时高亮预警
     "low_balance_by_provider": {},    # 按提供商单独设阈值：{"DeepSeek": 20, "Kimi": 50}
-    "days_default": 30,
+    "days_default": "month",          # 默认统计范围键：today/d3/week/month/h180/y365
     "usd_cny": 7.10,                  # 估算用汇率
-    "recharge_urls": {}               # key: 提供商名 → 充值页 URL（可覆盖）
+    "recharge_urls": {},              # key: 提供商名 → 充值页 URL（可覆盖）
+    # 折算「综合单价」（元/百万 tokens）用的典型配比，用于跨模型比价与当前时段推荐。
+    # 默认取编程长会话的常见形态：上下文缓存命中率高、输出占比小。
+    "price_mix": {"input": 0.30, "cache": 0.60, "output": 0.10},
 }
 
 # 官方充值页默认值（可被 config.json / 页面设置覆盖）
@@ -39,12 +45,6 @@ DEFAULT_RECHARGE = {
     "DeepSeek":  "https://platform.deepseek.com/top_up",
     "Kimi":      "https://platform.moonshot.cn/console/pay",
     "Zhipu GLM": "https://open.bigmodel.cn/finance/pay",
-}
-
-# 历史版本里指向首页的旧充值地址，读到后自动替换成直达充值页
-LEGACY_RECHARGE = {
-    "Kimi":      "https://platform.kimi.com",
-    "Zhipu GLM": "https://open.bigmodel.cn",
 }
 
 config = dict(DEFAULT_CONFIG)
@@ -55,22 +55,6 @@ try:
             config.update({k: v for k, v in user.items() if k in DEFAULT_CONFIG})
 except Exception as e:
     print("[config] 读取失败(使用默认):", e)
-
-# 迁移旧配置中的充值地址到直达充值页
-_ru = config.setdefault("recharge_urls", {})
-for k, old in LEGACY_RECHARGE.items():
-    if _ru.get(k) == old:
-        _ru[k] = DEFAULT_RECHARGE[k]
-try:
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            _disk = json.load(f)
-        if _disk.get("recharge_urls") != _ru:
-            _disk["recharge_urls"] = _ru
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(_disk, f, ensure_ascii=False, indent=2)
-except Exception:
-    pass
 
 
 def save_config():
@@ -114,7 +98,7 @@ def env_of(prow):
     return env, auth, cfg
 
 
-def detect_kind(name, base_url, api_key, cfg_meta):
+def detect_kind(name, base_url, api_key):
     """识别余额查询适配器类型"""
     host = (base_url or "").lower()
     n = (name or "").lower()
@@ -128,20 +112,19 @@ def detect_kind(name, base_url, api_key, cfg_meta):
     return "unknown"
 
 
-def provider_models(env, cfg):
-    """从配置里收集模型名（含别名清洗）"""
-    out, aliases = [], {}
+def provider_models(env):
+    """收集该提供商配置里用到的模型名（去掉 [1m] 之类的上下文标注）"""
+    out = []
     for k, v in env.items():
         if k.startswith("ANTHROPIC_") and k.endswith("_MODEL") and v:
             base = re.sub(r"\[.*?\]", "", str(v)).strip()
-            aliases[str(v)] = base
-            if base not in out:
+            if base and base not in out:
                 out.append(base)
     plain = str(env.get("ANTHROPIC_MODEL") or env.get("ANTHROPIC_DEFAULT_SONNET_MODEL") or "")
     base = re.sub(r"\[.*?\]", "", plain).strip()
     if base and base not in out:
         out.insert(0, base)
-    return out, aliases
+    return out
 
 
 def load_providers():
@@ -187,28 +170,20 @@ def load_providers():
                 or env.get("ANTHROPIC_BASE_URL", "") or "")
         if not key:
             continue
-        models, aliases = provider_models(env, cfg)
+        models = provider_models(env)
         is_current = bool(r["is_current"])
         url = (r["website_url"] or "")
-        kind = detect_kind(name, base, key, meta)
+        kind = detect_kind(name, base, key)
         providers.append({
-            "id": nid, "name": name, "category": r["category"],
+            "id": nid, "name": name,
             "base_url": base, "api_key_masked": mask_key(key), "_key": key,
-            "api_format": meta.get("apiFormat", ""),
             "website_url": url, "is_current": is_current,
-            "icon": r["icon"], "kind": kind,
-            "models": models, "_aliases": aliases,
-            "notes": r["notes"],
-            "usage_script": (meta.get("usage_script") if isinstance(meta, dict) else None),
+            "kind": kind, "models": models,
         })
     return providers, None
 
 
 # ---------------- 用量统计（本地记录合并） ----------------
-LOG_COLS = ("model", "input_tokens", "output_tokens", "cache_read_tokens",
-            "cache_creation_tokens", "total_cost_usd", "status_code", "created_at")
-
-
 def norm_model(m):
     if not m:
         return ""
@@ -227,7 +202,7 @@ def provider_for_model(model, provs):
                 return p
     # 2) 词族前缀：deepseek / kimi / glm …
     for p in provs:
-        fam = re.split(r"[-_0-9.].*$", m, 1)[0].lower() if m else ""
+        fam = re.split(r"[-_0-9.].*$", m, maxsplit=1)[0].lower() if m else ""
         if not fam:
             continue
         pname = p["name"].lower()
@@ -282,8 +257,9 @@ def collect_usage(provs, days):
             if not date:
                 continue
             p = provider_for_model(d.get("model"), provs)
-            pid = p["id"] if p else "__unmatched__"
-            key = (pid, d.get("model") or "", date)
+            if not p:
+                continue          # 归属不到已接入提供商 → 不计入（未连接的模型不在界面出现）
+            key = (p["id"], d.get("model") or "", date)
             e = by.setdefault(key, dict(empty))
             e["requests"] += 1
             e["success"] += 1 if (d.get("status_code") or 0) < 400 else 0
@@ -306,11 +282,12 @@ def collect_usage(provs, days):
             if not date:
                 continue
             p = provider_for_model(d.get("model"), provs)
-            pid = p["id"] if p else "__unmatched__"
+            if not p:
+                continue          # 同上：只统计已接入提供商
             m = d.get("model") or ""
-            if (pid, m, date) in by:   # 避免与日志重复计数
+            key = (p["id"], m, date)
+            if key in by:              # 避免与日志重复计数
                 continue
-            key = (pid, m, date)
             e = by.setdefault(key, dict(empty))
             e["requests"] += int(d.get("request_count") or 0)
             e["success"] += int(d.get("success_count") or 0)
@@ -326,49 +303,29 @@ def collect_usage(provs, days):
     except Exception as e:
         return {"error": str(e)}
 
-    # 汇聚输出
+    # 汇聚输出（只含已接入提供商）
     prov_map = {p["id"]: p for p in provs}
     out = {}
-    unmatched = dict(empty)
-    unmatched_models = {}
-    unmatched_model_days = {}   # 未归属模型 × 日期，供前端「按模型」趋势图使用
-    days_set = set((datetime.date.today() - datetime.timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1))
+    days_set = set((datetime.date.today() - datetime.timedelta(days=i)).isoformat()
+                   for i in range(days - 1, -1, -1))
     for (pid, model, date), e in by.items():
-        if pid == "__unmatched__":
-            mname = model or "(未知模型)"
-            for k in empty:
-                unmatched[k] += e[k]
-            um = unmatched_models.setdefault(mname, dict(empty))
-            um["model"] = mname
-            for k in empty:
-                um[k] += e[k]
-            md = unmatched_model_days.setdefault(mname, {}).setdefault(date, dict(empty))
-            for k in empty:
-                md[k] += e[k]
-            continue
         p = prov_map.get(pid)
         if not p:
             continue
         po = out.setdefault(pid, {"provider_id": pid, "name": p["name"], "kind": p["kind"],
-                                   "models": {}, "days": {}, "model_days": {}, "totals": dict(empty)})
-        po["days"].setdefault(date, dict(empty))
-        po["model_days"].setdefault(model, {}).setdefault(date, dict(empty))
+                                  "models": {}, "days": {}, "model_days": {},
+                                  "totals": dict(empty)})
+        day_rec = po["days"].setdefault(date, dict(empty))
+        md = po["model_days"].setdefault(model, {}).setdefault(date, dict(empty))
         mo = po["models"].setdefault(model, dict(empty))
         mo["model"] = model
-        md = po["model_days"][model][date]
         for k in empty:
-            if k == "cost":
-                po["totals"]["cost"] += e["cost"]
-                po["days"][date]["cost"] += e["cost"]
-                mo["cost"] += e["cost"]
-                md["cost"] += e["cost"]
-            else:
-                po["totals"][k] += e[k]
-                po["days"][date][k] += e[k]
-                mo[k] += e[k]
-                md[k] += e[k]
-    # 补零日期
-    for pid, po in out.items():
+            po["totals"][k] += e[k]
+            day_rec[k] += e[k]
+            mo[k] += e[k]
+            md[k] += e[k]
+    # 补零日期，保证趋势图时间轴完整
+    for po in out.values():
         for dd in days_set:
             po["days"].setdefault(dd, dict(empty))
         po["days"] = {dd: po["days"][dd] for dd in sorted(po["days"])}
@@ -376,32 +333,44 @@ def collect_usage(provs, days):
             for dd in days_set:
                 mdays.setdefault(dd, dict(empty))
             po["model_days"][mname] = {dd: mdays[dd] for dd in sorted(mdays)}
-        po["models"] = sorted(po["models"].values(),
-                              key=lambda x: x["cost"], reverse=True)
-    # 未归属模型补齐零日期，保证趋势图时间轴完整
-    for mname, mdays in unmatched_model_days.items():
-        for dd in days_set:
-            mdays.setdefault(dd, dict(empty))
-        unmatched_model_days[mname] = {dd: mdays[dd] for dd in sorted(mdays)}
+        po["models"] = sorted(po["models"].values(), key=lambda x: x["cost"], reverse=True)
     # 汇总行
     totals = dict(empty)
-    for pid, po in out.items():
+    for po in out.values():
         for k in empty:
             totals[k] += po["totals"][k]
-    unmatched_list = sorted(unmatched_models.values(), key=lambda x: x.get("cost", 0), reverse=True)
-    return {"per_provider": out, "totals": totals, "unmatched": unmatched,
-            "unmatched_models": unmatched_list,
-            "unmatched_model_days": unmatched_model_days, "days": days}
+    return {"per_provider": out, "totals": totals, "days": days}
 
 
 # ---------------- 余额查询（直连官方接口） ----------------
+# ---- HTTP 出口：直连优先，失败再退回系统代理 ----
+# 本机开 Clash 时 urllib 会从注册表读到系统代理（127.0.0.1:7890）。实测这条链路
+# 对国内开放平台（尤其 bigmodel.cn）会 SSL 握手超时，而直连 0.6s 就通；反过来在
+# 需要代理的网络里直连又不通。所以两头都要，先试直连、网络层失败再走代理。
+_OPENER_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_OPENER_PROXY = urllib.request.build_opener()
+
+
+def _urlopen(url, headers, timeout, method="GET", body=None):
+    """(status, text)。直连失败 → 换系统代理重试一次。"""
+    def _one(opener):
+        data = body.encode("utf-8") if isinstance(body, str) else body
+        req = urllib.request.Request(url, data=data, headers=dict(headers or {}), method=method)
+        with opener.open(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    try:
+        return _one(_OPENER_DIRECT)
+    except urllib.error.HTTPError:
+        raise                       # 服务器已应答（4xx/5xx），换出口没意义
+    except Exception:
+        return _one(_OPENER_PROXY)
+
+
 def http_get(url, headers, timeout=10, retries=1):
     last = None
     for i in range(retries + 1):
-        req = urllib.request.Request(url, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.status, resp.read().decode("utf-8", "replace")
+            return _urlopen(url, headers, timeout, "GET")
         except urllib.error.HTTPError as e:
             try:
                 body = e.read().decode("utf-8", "replace")
@@ -899,11 +868,8 @@ CURL_BIN = _find_curl()
 
 
 def http_post(url, headers, body, timeout=15):
-    data = (body or "").encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=dict(headers or {}), method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read().decode("utf-8", "replace")
+        return _urlopen(url, headers, timeout, "POST", body or "")
     except urllib.error.HTTPError as e:
         try:
             return e.code, e.read().decode("utf-8", "replace")
@@ -1062,25 +1028,36 @@ def pu_deepseek(cred, days):
     for i in range(days + 1):
         d = today - datetime.timedelta(days=i)
         months.add((d.year, d.month))
+    # 「全年」要跨 13 个月份 × 2 个接口，串行要近 20 秒 → 先并发取回原始响应，
+    # 再单线程按月归并，避免多个线程同时改写累加器。
+    jobs = [(y, m, kind) for (y, m) in sorted(months) for kind in ("amount", "cost")]
+
+    def fetch(job):
+        y, m, kind = job
+        url = ("https://platform.deepseek.com/api/v0/usage/%s?month=%d&year=%d"
+               % (kind, m, y))
+        return http_json(url, "GET", hdr, None, 20)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        fetched = list(ex.map(fetch, jobs))
+
     tok_acc, cost_acc, last_err, got_data = {}, {}, None, False
-    for (y, m) in sorted(months):
-        for path, acc, mode in (("amount", tok_acc, "tokens"), ("cost", cost_acc, "cost")):
-            url = "https://platform.deepseek.com/api/v0/usage/%s?month=%d&year=%d" % (path, m, y)
-            code, j = http_json(url, "GET", hdr, None, 20)
-            if j is None:
-                last_err = "HTTP %s 响应无法解析" % code
-                continue
-            pcode = j.get("code")
-            if pcode not in (0, 200, None) or (j.get("data") is None and j.get("biz_data") is None):
-                msg = str(j.get("msg") or j.get("message") or "").strip()
-                low = msg.lower()
-                if code in (401, 403) or "token" in low or "登录" in msg or "auth" in low:
-                    return {"status": "expired",
-                            "detail": "网页登录凭据无效或已过期，请重新获取（%s）" % (msg or ("HTTP %s" % code))}
-                last_err = msg or ("HTTP %s" % code)
-                continue
-            got_data = True
-            _ds_walk(j.get("data") if j.get("data") is not None else j.get("biz_data"), {}, acc, mode)
+    for (_y, _m, kind), (code, j) in zip(jobs, fetched):
+        acc, mode = (tok_acc, "tokens") if kind == "amount" else (cost_acc, "cost")
+        if j is None:
+            last_err = "HTTP %s 响应无法解析" % code
+            continue
+        pcode = j.get("code")
+        if pcode not in (0, 200, None) or (j.get("data") is None and j.get("biz_data") is None):
+            msg = str(j.get("msg") or j.get("message") or "").strip()
+            low = msg.lower()
+            if code in (401, 403) or "token" in low or "登录" in msg or "auth" in low:
+                return {"status": "expired",
+                        "detail": "网页登录凭据无效或已过期，请重新获取（%s）" % (msg or ("HTTP %s" % code))}
+            last_err = msg or ("HTTP %s" % code)
+            continue
+        got_data = True
+        _ds_walk(j.get("data") if j.get("data") is not None else j.get("biz_data"), {}, acc, mode)
     if not got_data and not tok_acc and not cost_acc:
         return {"status": "error", "detail": last_err or "平台未返回数据"}
     shape = _build_platform_shape(tok_acc, cost_acc, days)
@@ -1184,12 +1161,9 @@ def _kimi_get(endpoint, params=None, token=None, ms_auth=None, timeout=20):
 
 
 def _jwt_exp(t):
-    """取出 JWT 的 exp（秒）；失败返回 0"""
+    """取出 JWT 的 exp（秒）；失败返回 0（复用 jwt_claims，不再重复实现 base64 解码）"""
     try:
-        import base64
-        p = str(t).split(".")[1]
-        p += "=" * (-len(p) % 4)
-        return float(json.loads(base64.urlsafe_b64decode(p)).get("exp") or 0)
+        return float((jwt_claims(t) or {}).get("exp") or 0)
     except Exception:
         return 0.0
 
@@ -1358,17 +1332,24 @@ def _zh_token_kind(token_type):
 
 
 def _zh_row_cost(r):
-    """官方金额字段；体验包全额抵扣时它们全是 0，退回按 单价×用量 算计价金额，
-    否则「免费额度用量」在图上会恒等于 0，看不出真实消耗规模。"""
+    """官网「结算金额」= 真实扣费，也正是费用账单页显示给用户的那个数字。
+    体验包 / 免费额度全额抵扣的行三个字段都是 0 —— 那就是没扣钱，如实记 0；
+    不能按标价回补，否则页面金额会大于官网，用户一眼就看出对不上。"""
     for k in ("settlementAmount", "dueAmount", "originalAmount"):
         v = _num(r.get(k))
         if v > 0:
             return v
+    return 0.0
+
+
+def _zh_list_price(r):
+    """按官方单价折算的「官网计价」，只在整行被抵扣（实扣 0）时用来向用户披露抵扣了多少。"""
     price = _num(r.get("originalCostPrice")) or _num(r.get("costPrice"))
     uc = _num(r.get("usageCount"))
     if price > 0 and uc > 0 and "千token" in str(r.get("costUnit") or ""):
         return price * uc / 1000.0
     return 0.0
+
 
 
 def zhipu_account(cred, timeout=20):
@@ -1414,7 +1395,7 @@ def pu_zhipu(cred, days):
     months = sorted({(today - datetime.timedelta(days=i)).strftime("%Y-%m")
                      for i in range(days + 1)})
     tok_acc, cost_acc = {}, {}
-    rows_n, settled, last_err, got = 0, 0.0, None, False
+    rows_n, list_price, last_err, got = 0, 0.0, None, False
     pack_seen, last_usage = {}, None
     for mth in months:
         rows, err = zhipu_bills(c, mth)
@@ -1460,9 +1441,11 @@ def pu_zhipu(cred, days):
             b = tok_acc.setdefault(key, {})
             b[kind] = b.get(kind, 0) + n
             cc = cost_acc.setdefault(key, {"cost": 0.0})
-            cc["cost"] += _zh_row_cost(r)
+            amt = _zh_row_cost(r)
+            cc["cost"] += amt
+            if amt <= 0:                      # 整行被资源包 / 免费额度抵扣，另记一份「官网计价」
+                list_price += _zh_list_price(r)
             rows_n += 1
-            settled += _num(r.get("settlementAmount"))
     if not got:
         return {"status": "error", "detail": last_err or "平台未返回账单数据"}
     pack = None
@@ -1484,7 +1467,10 @@ def pu_zhipu(cred, days):
             out["resource_pack"] = pack
         return out
     shape = _to_usd(shape, "CNY")
-    shape["totals"]["cost_settled"] = round(settled, 6)
+    if list_price > 0:
+        # 与 cost_native（实扣）同为人民币口径，供界面披露「官网计价 / 抵扣」差额
+        shape["totals"]["cost_list"] = round(float(shape["totals"].get("cost_native") or 0)
+                                             + list_price, 6)
     out = {"status": "ok", "mode": "usage", "no_requests": True, "checked_at": now_iso(),
            "source": "官网费用账单（expenseBillList）", "bill_rows": rows_n, **shape}
     if pack:
@@ -1552,6 +1538,171 @@ def platform_usage_all(provs, days, force=False):
     return ordered
 
 
+# ---------------- 分时段定价 ----------------
+# 数据来源：各家开放平台公开定价页，人工核实于 PRICING_AS_OF。
+# 单位统一为「人民币元 / 百万 tokens」。各家的时段规则本来就不同，如实记录、不做归一化：
+#   · DeepSeek        峰谷定价。工作日 09:00–12:00、14:00–18:00 为高峰，
+#                     其余时段（含周末与法定节假日）为低谷，低谷价 = 高峰价的一半。
+#   · 智谱 GLM        全天同价，不随时段波动。
+#   · Kimi            全天同价，不随时段波动。
+# 只列 CC Switch 里实际接入的三家；每个模型都给出 peak / off 两组价，
+# 平台无时段差异时两组相同，由 slot.kind 说明。
+PRICING_AS_OF = "2026-09-16"
+
+PRICING = [
+    {
+        "key": "deepseek",
+        "label": "DeepSeek",
+        "slot": {"kind": "peak", "peak": [["09:00", "12:00"], ["14:00", "18:00"]]},
+        "slot_note": "工作日 09:00–12:00、14:00–18:00 为高峰；其余时段（含周末、法定节假日）"
+                     "为低谷，低谷价 = 高峰价的一半。按平台收到请求的时刻计费。",
+        "models": [
+            {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro",
+             "peak": {"input": 9.0, "cache": 0.30, "output": 27.0},
+             "off": {"input": 4.5, "cache": 0.15, "output": 13.5}},
+            {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash",
+             "peak": {"input": 3.0, "cache": 0.10, "output": 9.0},
+             "off": {"input": 1.5, "cache": 0.05, "output": 4.5}},
+        ],
+    },
+    {
+        "key": "zhipu",
+        "label": "智谱 GLM",
+        "slot": {"kind": "flat"},
+        "slot_note": "官方按量付费全天同价，不随时段波动（GLM-5.3 与上一代 GLM-5.2 同价）。",
+        "models": [
+            {"id": "glm-5.3", "label": "GLM-5.3",
+             "peak": {"input": 8.0, "cache": 2.0, "output": 28.0},
+             "off": {"input": 8.0, "cache": 2.0, "output": 28.0}},
+            {"id": "glm-5.2", "label": "GLM-5.2",
+             "peak": {"input": 8.0, "cache": 2.0, "output": 28.0},
+             "off": {"input": 8.0, "cache": 2.0, "output": 28.0}},
+            {"id": "glm-5.3-flash", "label": "GLM-5.3-Flash",
+             "peak": {"input": 0.8, "cache": 0.23, "output": 2.8},
+             "off": {"input": 0.8, "cache": 0.23, "output": 2.8}},
+        ],
+    },
+    {
+        "key": "kimi",
+        "label": "Kimi",
+        "slot": {"kind": "flat"},
+        "slot_note": "全天同价，官方未提供错峰折扣。编程场景缓存命中率通常很高，实际输入成本约为标价的 1/10。",
+        "models": [
+            {"id": "kimi-k3", "label": "Kimi K3",
+             "peak": {"input": 20.0, "cache": 2.0, "output": 100.0},
+             "off": {"input": 20.0, "cache": 2.0, "output": 100.0}},
+        ],
+    },
+]
+
+
+def _minutes(hhmm):
+    h, m = str(hhmm).split(":")
+    return int(h) * 60 + int(m)
+
+
+def _at(day, minutes):
+    return day.replace(hour=minutes // 60, minute=minutes % 60, second=0, microsecond=0)
+
+
+def slot_state(slot, now=None):
+    """当前处于哪个计价时段 → (key, 展示名, 距下次切换的分钟数或 None)。
+    key 只会是 'peak' / 'off' / 'flat'；只有峰谷定价的平台（DeepSeek）需要算时段，
+    其余直接全天同价。"""
+    now = now or datetime.datetime.now()
+    if ((slot or {}).get("kind") or "flat") != "peak":
+        return "flat", "全天同价", None
+    t = now.hour * 60 + now.minute
+    peaks = [(_minutes(a), _minutes(b)) for a, b in (slot.get("peak") or [])]
+    weekday = now.weekday() < 5
+    in_peak = weekday and any(a <= t < b for a, b in peaks)
+    nxt = None
+    if in_peak:
+        for a, b in peaks:
+            if a <= t < b:
+                nxt = _at(now, b)
+                break
+    elif weekday:
+        for a, _b in peaks:
+            if t < a:
+                nxt = _at(now, a)
+                break
+    if nxt is None and peaks:          # 今天不再进高峰 → 顺延到下一个工作日的首个高峰
+        for i in range(1, 9):
+            d = now + datetime.timedelta(days=i)
+            if d.weekday() < 5:
+                nxt = _at(d, peaks[0][0])
+                break
+    return ("peak" if in_peak else "off"), ("高峰时段" if in_peak else "低谷时段"), nxt
+
+
+
+def _price_mix():
+    """折算「综合单价」用的输入/缓存/输出配比（来自 config.price_mix）"""
+    m = config.get("price_mix") or {}
+    try:
+        wi = float(m.get("input", 0.30))
+        wc = float(m.get("cache", 0.60))
+        wo = float(m.get("output", 0.10))
+    except Exception:
+        wi, wc, wo = 0.30, 0.60, 0.10
+    s = wi + wc + wo
+    if s <= 0:
+        return 0.30, 0.60, 0.10
+    return wi / s, wc / s, wo / s
+
+
+def blended_price(prices, mix):
+    """按配比把三档单价折成一个「元/百万 tokens」的可比数字"""
+    wi, wc, wo = mix
+    return (float((prices or {}).get("input") or 0) * wi
+            + float((prices or {}).get("cache") or 0) * wc
+            + float((prices or {}).get("output") or 0) * wo)
+
+
+def pricing_snapshot():
+    now = datetime.datetime.now()
+    mix = _price_mix()
+    platforms, all_rows = [], []
+    for plat in PRICING:
+        slot_key, slot_label, nxt = slot_state(plat["slot"], now)
+        rows = []
+        for m in plat["models"]:
+            cur = m["peak"] if slot_key == "peak" else m["off"]
+            base = m["off"] if slot_key == "peak" else m["peak"]
+            b_cur = blended_price(cur, mix)
+            b_base = blended_price(base, mix)
+            rows.append({
+                "id": m["id"], "label": m["label"],
+                "prices": cur, "baseline_prices": base,
+                "blended": round(b_cur, 4),
+                "blended_baseline": round(b_base, 4),
+                "discounted": b_cur < b_base - 1e-9,
+            })
+        rows.sort(key=lambda r: r["blended"])
+        platforms.append({
+            "key": plat["key"], "label": plat["label"],
+            "slot": slot_key, "slot_label": slot_label, "slot_note": plat.get("slot_note", ""),
+            "next_change_in_min": (int((nxt - now).total_seconds() // 60) if nxt else None),
+            "next_change_at": (nxt.strftime("%m-%d %H:%M") if nxt else None),
+            "models": rows,
+        })
+    for p in platforms:
+        for r in p["models"]:
+            all_rows.append({**r, "platform": p["label"], "platform_key": p["key"],
+                             "slot": p["slot"], "slot_label": p["slot_label"]})
+    all_rows.sort(key=lambda r: r["blended"])
+    return {
+        "as_of": PRICING_AS_OF,
+        "now": now.strftime("%Y-%m-%d %H:%M"),
+        "weekday": "一二三四五六日"[now.weekday()],
+        "mix": {"input": round(mix[0], 4), "cache": round(mix[1], 4), "output": round(mix[2], 4)},
+        "currency": "CNY",
+        "platforms": platforms,
+        "top": all_rows[:3],
+    }
+
+
 # ---------------- HTTP 服务 ----------------
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -1605,9 +1756,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if path == "/api/data":
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 try:
-                    days = max(1, min(365, int((q.get("days") or ["30"])[0])))
+                    days = max(1, min(365, int((q.get("days") or ["7"])[0])))
                 except Exception:
-                    days = 30
+                    days = 7
                 provs, err = load_providers()
                 if err:
                     return self._json({"ok": False, "error": err})
@@ -1635,24 +1786,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         else:
                             total["plan"] += 1
                     out_providers.append(item)
-                unmatched = usage.get("unmatched")
                 return self._json({"ok": True,
                                    "server_time": now_iso(),
                                    "db_path": DB_PATH,
                                    "providers": out_providers,
                                    "usage_totals": usage.get("totals"),
-                                   "usage_unmatched": unmatched,
-                                   "usage_unmatched_models": usage.get("unmatched_models") or [],
-                                   "usage_unmatched_model_days": usage.get("unmatched_model_days") or {},
                                    "total_summary": total,
                                    "days": usage.get("days", days),
                                    "days_n": days})
+            if path == "/api/pricing":
+                return self._json({"ok": True, **pricing_snapshot()})
             if path == "/api/platform":
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 try:
-                    days = max(1, min(365, int((q.get("days") or ["30"])[0])))
+                    days = max(1, min(365, int((q.get("days") or ["7"])[0])))
                 except Exception:
-                    days = 30
+                    days = 7
                 force = (q.get("force") or ["0"])[0] in ("1", "true", "yes")
                 provs, err = load_providers()
                 if err:
@@ -1711,6 +1860,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if amt > 0:
                         lbp[name] = round(amt, 2)
                 config["low_balance_by_provider"] = lbp
+            if isinstance(payload.get("price_mix"), dict):
+                pm = {}
+                for k in ("input", "cache", "output"):
+                    try:
+                        v = float(payload["price_mix"].get(k))
+                    except Exception:
+                        continue
+                    if v >= 0:
+                        pm[k] = round(v, 4)
+                if pm:
+                    mix = dict(DEFAULT_CONFIG["price_mix"])
+                    mix.update(pm)
+                    if sum(mix.values()) > 0:
+                        config["price_mix"] = mix
             save_config()
             return self._json({"ok": True})
         if path == "/api/platform_creds":

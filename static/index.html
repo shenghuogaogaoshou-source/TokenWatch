@@ -88,20 +88,25 @@
   </div>
   <section class="providers" id="providers" aria-label="各平台余量与用量" data-page-node-id="swetO7Ilw4lcquY7JoT7YG"></section>
 
+  <!-- 分时段定价与当前时段推荐 -->
+  <div class="sec-head" data-page-node-id="secHeadPrice">
+    <h2 class="sec-title">当前时段与性价比推荐</h2>
+    <span class="sec-note" id="priceNote">按各家官网当前价折算，含错峰时段</span>
+  </div>
+  <section class="pricing" id="pricingPanel" aria-label="分时段定价与推荐"></section>
+
   <!-- 明细面板 -->
   <section class="panel" id="detailPanel" aria-label="用量明细" data-page-node-id="ZCeDWjj7zdcrpNk688u1op">
     <div class="panel-head" data-page-node-id="PBDs2dz8hJlyHYKuR358qI">
       <div class="panel-title" data-page-node-id="EvPE4LMG7XCWDmrBUEWwkJ">
         <h2 data-page-node-id="y7d2DCPp3xQkwK2BiCSS4q">用量明细</h2>
         <div class="seg" id="rangeSeg" role="tablist" aria-label="统计范围" data-page-node-id="NCsKJ2ygGNANZQRV0EVurA">
-          <button data-days="7" data-page-node-id="CbpgOtbYLLeAFj6lpOMqnc">7 天</button>
-          <button data-days="30" class="on" data-page-node-id="AWh1caGlZVZcOfR2AhIX8V">30 天</button>
-          <button data-days="90" data-page-node-id="DyeP93TEIo3QkeCSBiZKT9">90 天</button>
-          <button data-days="365" data-page-node-id="SKv5zyd3k4T9SPZkY3BQFR">全年</button>
-        </div>
-        <div class="seg seg-alt" id="viewSeg" role="tablist" aria-label="明细维度">
-          <button data-view="provider" class="on">按提供商</button>
-          <button data-view="model">按模型</button>
+          <button data-days="today" title="今天 00:00 起">今天</button>
+          <button data-days="d3">3 天</button>
+          <button data-days="week" title="本周一（周始为周一）到今天">本周</button>
+          <button data-days="month" class="on" title="本月 1 号到今天">本月</button>
+          <button data-days="h180">半年</button>
+          <button data-days="y365">全年</button>
         </div>
       </div>
       <div class="panel-legend" id="legend" data-page-node-id="u8V7CJZN8EqVNBC5NApTGC"></div>
@@ -131,7 +136,7 @@
       <table class="tbl" id="modelTable" data-page-node-id="eslvS12ftNFdj1vqEQR8Mk">
         <thead data-page-node-id="azuW2zQkPPidQuNjjSodly">
           <tr data-page-node-id="96hVz54b8WNLKPRvzlH2ZT">
-            <th data-page-node-id="m6AUNlOLCQmCIFfPc8e7Im">提供商</th><th data-page-node-id="lGuzAqGxIoPWRAb4tdYsel">模型</th><th class="num" data-page-node-id="ZaBykk6ZB8UJo3MiLTnq7S">请求数</th>
+            <th data-page-node-id="m6AUNlOLCQmCIFfPc8e7Im">API / 平台</th><th data-page-node-id="lGuzAqGxIoPWRAb4tdYsel">用量来源</th><th class="num" data-page-node-id="ZaBykk6ZB8UJo3MiLTnq7S">请求数</th>
             <th class="num" data-page-node-id="csKZYzAxOFE732DVh0GxUH">输入 token</th><th class="num" data-page-node-id="DNVJ0P8lKL1uIvGYC2cPEX">输出 token</th>
             <th class="num" data-page-node-id="AyNEsRe2YHhnYdhAQkVDCe">缓存读 token</th><th class="num" data-page-node-id="NCWGNnej6qu2KVNdgEfep3">消耗 USD</th>
             <th class="num" data-page-node-id="KuBB0kxrI8t3EabHxWcbpN">占比</th><th class="num" data-page-node-id="mwrFiBVf3bnlbCJKMWBTzB">最后活跃</th>
@@ -144,8 +149,8 @@
   </section>
 
   <footer class="foot" data-page-node-id="THVHwHo4H5pGtCjbDG8lT5">
-    <p data-page-node-id="lx8xAmC7STD55PAN64AgRL"><b data-page-node-id="bruMx7sNS2KFytHFoslTbW">数据来源：</b>余额来自各平台官方账户接口实时查询；用量<strong>以供应商官网真实用量优先</strong>（用你的网页登录态直连供应商控制台，即账户实际扣费口径），官网未接通或该平台不提供明细时，自动回落为该提供商的 <strong>CC Switch 本地记录</strong>（本机 Claude Code / Codex 会话日志与本地代理），两者在同一个视图里合成展示、逐家标注来源。平台凭据只保存在本机应用数据目录的 <code data-page-node-id="pcredFile">platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
-    <p data-page-node-id="iOeJUV38RZIYvIduKFs5BS"><b data-page-node-id="fZVarIVPwJSzhaTsgCTAZk">说明：</b>Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算，汇率 ¥1≈$<span id="fxRate" data-page-node-id="0eOm7g7CgrG6zRzXj0oZof">7.10</span> 仅供参考；智谱 GLM 若为 Coding Plan 套餐，显示的是额度窗口剩余百分比。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
+    <p data-page-node-id="lx8xAmC7STD55PAN64AgRL"><b data-page-node-id="bruMx7sNS2KFytHFoslTbW">数据来源：</b>余额与用量均尽量取自各平台官方接口（用你的网页登录态直连供应商控制台，即账户实际扣费口径）；官网未接通或该平台不提供明细时，自动回落为该提供商的 <strong>CC Switch 本地记录</strong>，两者在同一个视图里合成展示、逐家标注来源。<strong>只统计已在 CC Switch 中接入的提供商</strong>，未接入通道（例如 Codex 直连的 gpt 系列）的用量不会出现在本页。平台凭据只保存在本机应用数据目录的 <code data-page-node-id="pcredFile">platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
+    <p data-page-node-id="iOeJUV38RZIYvIduKFs5BS"><b data-page-node-id="fZVarIdVwJSzhaTsgCTAZk">说明：</b>「当前时段与性价比推荐」里的价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），该配比可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算，汇率 ¥1≈$<span id="fxRate" data-page-node-id="0eOm7g7CgrG6zRzXj0oZof">7.10</span> 仅供参考。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
   </footer>
 </main>
 
@@ -170,8 +175,15 @@
         <div id="lowEdits" class="recharge-edits"></div>
       </div>
       <label class="field" data-page-node-id="8uzHSEAjvUfeC92E4fM9rH">
-        <span data-page-node-id="yua5VOwIGj9QIhhT6Bi8Hy">默认统计天数</span>
-        <input type="number" id="cfgDays" min="7" max="365" step="1" data-page-node-id="6uGwhVdEcVzxAL7oTDtuUu">
+        <span data-page-node-id="yua5VOwIGj9QIhhT6Bi8Hy">默认统计范围</span>
+        <select id="cfgDays" data-page-node-id="6uGwhVdEcVzxAL7oTDtuUu">
+          <option value="today">今天</option>
+          <option value="d3">3 天</option>
+          <option value="week">本周</option>
+          <option value="month">本月</option>
+          <option value="h180">半年</option>
+          <option value="y365">全年</option>
+        </select>
       </label>
       <div class="field field-block" data-page-node-id="rbRjlBHHiLP1V2HXjgicZj">
         <span data-page-node-id="9VDlh2bikKKS11RcWYnHS9">充值页直达地址（可覆盖默认值）</span>

@@ -14,16 +14,6 @@ function visFor(name) {
   return PROVIDER_VIS.find((v) => v.test.test(name)) || PROVIDER_VIS[PROVIDER_VIS.length - 1];
 }
 
-/* 模型维度的稳定配色（按名称哈希取色，同一模型永远同色） */
-const MODEL_PALETTE = ["#4361EE", "#7A5CFF", "#0E9C98", "#F59E0B", "#EF4444",
-  "#06B6D4", "#8B5CF6", "#10B981", "#F97316", "#3B82F6", "#EC4899", "#84CC16"];
-function colorForModel(name) {
-  let h = 0;
-  const s = String(name || "");
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return MODEL_PALETTE[h % MODEL_PALETTE.length];
-}
-
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, html) => {
   const n = document.createElement(tag);
@@ -60,11 +50,6 @@ function fmtUSD(v) {
   const d = Math.abs(v) >= 1 ? 2 : 4;
   return "$" + v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
-function todayOffset(n) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
 /* 本地时区的 YYYY-MM-DD（toISOString 是 UTC，东八区凌晨会差一天） */
 function localISO(offset) {
   const d = new Date();
@@ -74,11 +59,40 @@ function localISO(offset) {
 }
 
 const state = {
-  providers: [], recharge: {}, cfg: null, rangeDays: 30, metric: "cost", view: "provider",
-  timer: null, platTimer: null, loading: 0, dataMain: null, data7: null, providerSig: null,
+  providers: [], recharge: {}, cfg: null, rangeDays: 1, rangeKey: "month", metric: "cost",
+  timer: null, platTimer: null, priceTimer: null, loading: 0,
+  dataMain: null, data7: null, providerSig: null,
   platform: null,      // /api/platform 的响应（统一视图里始终尝试读取）
   platSig: null,       // 平台数据的签名，只有变化才重绘
+  pricing: null,       // /api/pricing 的响应（分时段定价 + 当前时段推荐）
+  priceSig: null,      // 定价数据的签名，只有变化才重绘
 };
+
+/* ---------- 统计范围 ---------- */
+/* 范围键 = #rangeSeg 上的 data-days。本周 / 本月都是「动态天数」，随日期变，不能写死，
+   所以范围键用字符串，真实天数由 rangeDays() 现算。 */
+const RANGE_KEYS = ["today", "d3", "week", "month", "h180", "y365"];
+/* 兼容早期存在配置里的天数字面量 */
+const RANGE_LEGACY = { "1": "today", "3": "d3", "7": "week", "0": "month", "180": "h180", "365": "y365" };
+function normRange(v) {
+  return RANGE_KEYS.includes(v) ? v : (RANGE_LEGACY[String(v)] || "month");
+}
+function rangeDays(key) {
+  const d = new Date();
+  if (key === "today") return 1;
+  if (key === "d3") return 3;
+  if (key === "week") return ((d.getDay() + 6) % 7) + 1;   // 周一为一周之始
+  if (key === "month") return d.getDate();
+  return key === "h180" ? 180 : 365;
+}
+function rangeText() {
+  return { today: "今天", d3: "最近 3 天", week: "本周", month: "本月",
+           h180: "最近半年", y365: "最近一年" }[state.rangeKey] || "本月";
+}
+function syncRangeSeg() {
+  document.querySelectorAll("#rangeSeg button").forEach(
+    (b) => b.classList.toggle("on", b.dataset.days === state.rangeKey));
+}
 
 /* ---------- CC Switch 提供商变更监听 ---------- */
 function providerSigFrom(provs) {
@@ -173,28 +187,6 @@ async function loadConfig() {
   } catch (e) { /* 默认配置继续 */ }
 }
 
-function providerTotals7() {
-  /* 近7日 聚合（来自独立请求 data7），含未归属模型 */
-  const t = { cost: 0, tok: 0, req: 0 };
-  if (!state.data7) return t;
-  const per = state.data7.providers || [];
-  for (const p of per) {
-    const u = p.usage;
-    if (!u) continue;
-    t.cost += u.totals?.cost || 0;
-    t.tok += (u.totals?.input || 0) + (u.totals?.output || 0) +
-             (u.totals?.cache_read || 0) + (u.totals?.cache_creation || 0);
-    t.req += u.totals?.requests || 0;
-  }
-  const un = state.data7.usage_unmatched;
-  if (un) {
-    t.cost += un.cost || 0;
-    t.tok += (un.input || 0) + (un.output || 0) + (un.cache_read || 0) + (un.cache_creation || 0);
-    t.req += un.requests || 0;
-  }
-  return t;
-}
-
 /* ============================================================
    统一数据来源：官网真实用量优先，未覆盖的自动回落 CC Switch 本地记录
    ============================================================ */
@@ -237,14 +229,7 @@ function unifiedTotals7() {
     acc(p.usage.totals);
     t.localN++;
   }
-  /* 3) 未归属模型（官方直连等，官网侧看不到） */
-  const un = state.data7 && state.data7.usage_unmatched;
-  if (un) acc(un);
   return t;
-}
-
-function platformUsageOk() {
-  return platformCoveredIds().size > 0;
 }
 
 /* 数据来源状态条（统一视图，无切换开关） */
@@ -255,25 +240,32 @@ function syncSrcBar() {
   const kinds = Object.keys(c);
   const okN = kinds.filter((k) => c[k] && c[k].configured).length;
   const covered = platformCoveredIds();
+  /* 「接通」= 凭据可用（查到数，或凭据有效只是本区间没用量）。
+     区间内没用量不该被当成「没接通」，否则状态条会看起来像出错了。 */
+  const emptyN = Object.values((plat && plat.usage) || {})
+    .filter((r) => r && r.status === "empty").length;
+  const liveN = covered.size + emptyN;
   const nProv = (state.providers || []).length;
 
   if (badge) {
-    badge.className = "src-badge" + (covered.size ? " on" : "");
+    badge.className = "src-badge" + (liveN ? " on" : "");
     badge.innerHTML = `<i class="src-dot"></i>` +
-      (covered.size ? "官网实时 · " + covered.size + " 家" : "本地记录");
+      (liveN ? "官网实时 · " + liveN + " 家" : "本地记录");
   }
   if (hint) {
     hint.textContent = !plat
       ? "正在读取供应商官网用量…"
-      : covered.size
-        ? (covered.size < nProv
-            ? "已接通 " + covered.size + "/" + nProv + " 家官网接口，其余自动回落本地记录"
-            : "全部提供商均已接通官网接口，按账户实际扣费口径显示")
-        : "官网用量暂不可得，当前以 CC Switch 本地记录呈现";
+      : emptyN
+        ? `已接通 ${liveN}/${nProv} 家官网接口；其中 ${emptyN} 家在本区间内没有用量，按 0 计`
+        : liveN
+          ? (liveN < nProv
+              ? "已接通 " + liveN + "/" + nProv + " 家官网接口，其余自动回落本地记录"
+              : "全部提供商均已接通官网接口，按账户实际扣费口径显示")
+          : "官网用量暂不可得，当前以 CC Switch 本地记录呈现";
   }
   if (!cred) return;
   if (!kinds.length) { cred.textContent = ""; cred.className = "src-credstate"; return; }
-  cred.className = "src-credstate " + (covered.size ? "ok" : (okN ? "warn" : ""));
+  cred.className = "src-credstate " + (liveN ? "ok" : (okN ? "warn" : ""));
   cred.textContent = okN + "/" + kinds.length + " 家已配置" +
     (okN < kinds.length ? " · 点「平台凭据」补齐" : "");
 }
@@ -306,6 +298,7 @@ async function refreshAll(quiet) {
   try {
     await loadConfig();
     const days = state.rangeDays;
+    refreshPricing();                 // 定价 / 推荐独立取值，不阻塞主数据
     /* 官网要逐个直连供应商接口，可能慢；不让它拖住首屏 */
     const platP = getJSON("/api/platform?days=" + days + (quiet ? "" : "&force=1"))
       .catch(() => null);
@@ -355,6 +348,7 @@ async function refreshAll(quiet) {
    ============================================================ */
 function renderAll() {
   renderTape();
+  renderPricing();
   renderProviders();
   renderDetail();
   renderExpiryStrip();
@@ -476,6 +470,110 @@ function renderTape() {
 function shortDb() {
   const p = (state.dataMain && state.dataMain.db_path) || "";
   return p.replace(/\\/g, "/").replace(/^.*\/([^/]+)$/, "…/$1");
+}
+
+/* ---------- 分时段定价 + 当前时段性价比推荐 ---------- */
+/* 价格单位统一为「元 / 百万 tokens」；综合单价 = 输入/缓存/输出三档按配比折算 */
+function price3(v) {
+  v = v || 0;
+  return "¥" + (v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3));
+}
+
+function renderPricing() {
+  const host = $("#pricingPanel");
+  if (!host) return;
+  const asOfEl = $("#priceAsOfFoot");
+  const mixEl = $("#priceMixFoot");
+  const noteEl = $("#priceNote");
+  const p = state.pricing;
+
+  if (!p) {
+    host.innerHTML = `<div class="price-empty">正在读取各家开放平台定价…</div>`;
+    return;
+  }
+  if (asOfEl) asOfEl.textContent = (p.as_of || "—").replace(/-/g, "/");
+  if (mixEl && p.mix) {
+    mixEl.textContent = `输入 ${(p.mix.input * 100).toFixed(0)}% / 缓存命中 ${(p.mix.cache * 100).toFixed(0)}% / 输出 ${(p.mix.output * 100).toFixed(0)}%`;
+  }
+  if (noteEl) {
+    noteEl.textContent = `${p.now}（周${p.weekday}）· 综合单价按输入 / 缓存 / 输出配比折算，单位元 / 百万 tokens`;
+  }
+
+  const top = p.top || [];
+  /* 当前时段首选 + 备选 */
+  let head = '<div class="price-lead">';
+  if (top.length) {
+    const a = top[0];
+    head += `<div class="pl-main">
+      <span class="pl-tag">当前时段首选</span>
+      <div class="pl-name">${esc(a.label)}<span class="pl-plat">${esc(a.platform)} · ${esc(a.slot_label)}</span></div>
+      <div class="pl-price">${price3(a.blended)}<small>/ 百万 tokens</small></div>
+    </div>`;
+    if (top.length > 1) {
+      head += '<div class="pl-alt"><span class="pl-alt-h">备选</span>' +
+        top.slice(1).map((r, i) => `<span class="pl-alt-i"><b>${i + 2}</b> ${esc(r.label)}
+          <i class="pl-alt-p">${price3(r.blended)}</i>
+          <em>${esc(r.platform)} · ${esc(r.slot_label)}</em></span>`).join("") + '</div>';
+    }
+  } else {
+    head += '<div class="pl-main"><div class="pl-name">暂无可比价的模型定价</div></div>';
+  }
+  head += '</div>';
+
+  /* 逐家定价卡：该家当前生效的三档价 + 综合单价 */
+  const grid = (p.platforms || []).map((pf) => {
+    const rows = (pf.models || []).map((m) => {
+      const pr = m.prices || {};
+      const num = (x) => (x == null ? "—" : (x >= 10 ? x.toFixed(1) : x.toFixed(x >= 1 ? 2 : 3)));
+      const off = m.discounted
+        ? `<span class="pr-off" title="相较另一时段的全价">原价 ${price3(m.blended_baseline)}</span>` : "";
+      return `<tr>
+        <td class="pr-name">${esc(m.label)}</td>
+        <td class="num">${num(pr.input)}</td>
+        <td class="num">${num(pr.cache)}</td>
+        <td class="num">${num(pr.output)}</td>
+        <td class="num pr-blend"><b>${price3(m.blended)}</b>${off}</td>
+      </tr>`;
+    }).join("");
+    const nxt = pf.next_change_in_min != null
+      ? `${esc(pf.next_change_at)} 切换 · ${pf.next_change_in_min} 分钟后`
+      : "全天不切换";
+    return `<article class="price-card ${esc(pf.slot)}">
+      <header class="pr-head">
+        <h3>${esc(pf.label)}</h3>
+        <span class="pr-slot">${esc(pf.slot_label)}</span>
+      </header>
+      <div class="pr-meta"><span class="pr-next">${nxt}</span><span class="pr-unit">元 / 百万 tokens</span></div>
+      <table class="pr-table">
+        <thead><tr><th>模型</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">综合</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="pr-note">${esc(pf.slot_note || "")}</p>
+    </article>`;
+  }).join("");
+
+  host.innerHTML = head + `<div class="price-grid">${grid}</div>`;
+}
+
+/* 定价与推荐独立轮询：时段切换 / 价格调整都能跟上（内容没变就不重绘，避免打断 hover） */
+function priceSigOf(p) {
+  if (!p) return "";
+  return JSON.stringify([
+    p.as_of, p.now,
+    (p.platforms || []).map((x) => [x.key, x.slot, x.next_change_in_min,
+      (x.models || []).map((m) => [m.id, m.blended])]),
+  ]);
+}
+async function refreshPricing() {
+  try {
+    const p = await getJSON("/api/pricing");
+    if (!p || !p.ok) return;
+    const sig = priceSigOf(p);
+    if (sig === state.priceSig) return;
+    state.pricing = p;
+    state.priceSig = sig;
+    renderPricing();
+  } catch (e) { /* 静默重试 */ }
 }
 
 /* ---------- 提供商卡片 ---------- */
@@ -602,18 +700,22 @@ function buildCard(p, i) {
   const stripWrap = el("div", "usage-wrap");
   if (su.src === "platform") {
     const pr = su.platform || {};
-    const nat = pr.totals && pr.totals.cost_native;
-    const settled = pr.totals && pr.totals.cost_settled;
+    const nat = pr.totals && pr.totals.cost_native;     // 官网实扣（结算金额），与官网页面一致
+    const list = pr.totals && pr.totals.cost_list;      // 官网计价（含被资源包抵扣掉的部分）
     const fxr = pr.fx || (state.cfg && state.cfg.usd_cny) || 7.1;
     let natTxt = "";
-    if (pr.currency === "CNY" && nat > 0) {
-      natTxt = (settled === 0)
-        ? ` ｜ 官网计价 ${money(nat, "CNY")}（资源包全额抵扣，实扣 ¥0）`
-        : ` ｜ 官网实扣 ${money(nat, "CNY")}（按 ¥${fxr}/USD 折算）`;
+    if (pr.currency === "CNY" && (nat > 0 || list > 0)) {
+      if (nat > 0) {
+        const cut = list > nat
+          ? `；官网计价 ${money(list, "CNY")}，资源包/免费额度已抵扣 ${money(list - nat, "CNY")}` : "";
+        natTxt = ` ｜ 官网实扣 ${money(nat, "CNY")}（按 ¥${fxr}/USD 折算${cut}）`;
+      } else {
+        natTxt = ` ｜ 本区间全部由资源包/免费额度抵扣（官网计价 ${money(list, "CNY")}）`;
+      }
     }
     stripWrap.appendChild(el("div", "strip-src",
       (costOnly ? "官网实时 · 账户实际扣费口径（该平台仅提供金额）"
-        : noReq ? "官网实时 · 官网账单计价口径（官网不提供请求数）"
+        : noReq ? "官网实时 · 账户实际扣费口径（官网账单不提供请求数）"
           : "官网实时 · 账户实际扣费口径") + natTxt));
   } else {
     const st = su.pending && su.pending.status;
@@ -624,9 +726,9 @@ function buildCard(p, i) {
         ? "该平台仅有套餐额度（见上方余额）· 明细用本地记录"
       : st === "expired" ? "官网凭据失效 · 本地记录"
       : st === "error" ? "官网读取失败 · 本地记录"
-      : "官网区间内无数据 · 本地记录";
+      : "官网本区间无用量 · 按 0 计";
     stripWrap.appendChild(el("div", "strip-src muted",
-      why + ((st === "empty" || st === "error") && det ? "（" + String(det).slice(0, 60) + "）" : "")));
+      why + (st === "error" && det ? "（" + String(det).slice(0, 60) + "）" : "")));
   }
   stripWrap.appendChild(strip);
   card.appendChild(stripWrap);
@@ -800,7 +902,7 @@ function fmtReset(v) {
   return s;
 }
 
-/* ---------- 明细：趋势图 + 模型表（统一视图） ---------- */
+/* ---------- 明细：趋势图 + 逐 API 汇总表（统一视图） ---------- */
 function renderDetail() {
   if (!state.dataMain) return;
   const pv = $("#platformView");
@@ -810,29 +912,36 @@ function renderDetail() {
     if (cards) pv.appendChild(cards);
   }
 
-  const all = mergedProviders();
-  const provs = all.filter((p) => Object.keys((p.usage && p.usage.days) || {}).length);
-  const nPlat = all.filter((p) => p._src === "platform").length;
-  const nLocal = all.length - nPlat;
-  const nUnmatched = (state.dataMain.usage_unmatched_models || []).length;
-  const nModels = provs.reduce((s, x) => s + ((x.usage.models || []).length), 0) + nUnmatched;
+  /* 图表只画区间内真有数据的家；明细表把每家都列出来，没有用量的按 0 计
+     （未接入通道 gpt / Codex 直连在服务端已被剔除，这里不会出现） */
+  const allProvs = mergedProviders();
+  const hasData = (p) => Object.keys((p.usage && p.usage.days) || {}).length > 0;
+  const chartProvs = allProvs.filter(hasData);
+  const zeroN = allProvs.length - chartProvs.length;
+  const nPlat = allProvs.filter((p) => p._src === "platform").length;
+  const nEmpty = allProvs.filter((p) => p._why === "empty").length;
+  const nLocal = allProvs.length - nPlat - nEmpty;
+  const nModels = allProvs.reduce((s, x) => s + ((x.usage.models || []).length), 0);
   const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
   const anyCny = Object.values((state.platform && state.platform.usage) || {})
     .some((r) => r && r.status === "ok" && r.currency === "CNY");
-  const anyCostOnly = provs.some((p) => p.usage && p.usage.costOnly);
-  const anyNoReq = provs.some((p) => p.usage && p.usage.noRequests && !p.usage.costOnly);
+  const anyCostOnly = allProvs.some((p) => p.usage && p.usage.costOnly);
+  const anyNoReq = allProvs.some((p) => p.usage && p.usage.noRequests && !p.usage.costOnly);
 
-  renderChart(provs, { includeUnmatched: true, emptyHtml: unifiedEmptyHtml() });
-  renderModelTable(provs, {
-    unmatchedModels: state.dataMain.usage_unmatched_models || [],
+  renderChart(chartProvs, { emptyHtml: unifiedEmptyHtml() });
+  renderApiTable(allProvs, {
     emptyText: unifiedEmptyText(),
-    noteText: provs.length
-      ? `范围：最近 ${state.rangeDays} 天 · 合成视图：${nPlat} 家取供应商官网实际扣费口径` +
+    noteText: allProvs.length
+      ? `范围：${rangeText()} · 逐家判定：${nPlat} 家取官网实际扣费口径` +
         (nLocal ? `，${nLocal} 家官网未接通、回落本机 CC Switch 记录（估算口径）` : "") +
         (anyCny ? `；官网人民币金额已按 ¥${fxr}/USD 折算` : "") +
-        (anyCostOnly ? "；带「金额口径」标记的平台官网只开放消费金额，不提供 token / 请求数" : "") +
-        (anyNoReq ? "；带「无请求数」标记的平台官网账单不提供请求数，仅有 token 与金额" : "") +
-        `。明细按「提供商 × 模型」展开（${nModels} 条${nUnmatched ? "，含 " + nUnmatched + " 个未归属模型" : ""}）。`
+        (anyCostOnly ? "；带「金额口径」的平台官网只开放消费金额，不提供 token / 请求数" : "") +
+        (anyNoReq ? "；带「无请求数」的平台官网账单不提供请求数，仅有 token 与金额" : "") +
+        (zeroN
+          ? `；${zeroN} 家在本区间内没有用量，按 0 计` +
+            (nEmpty === zeroN ? "（官网均已接通）" : nEmpty ? `（其中 ${nEmpty} 家官网已接通）` : "")
+          : "") +
+        `。一行一家 API / 平台（共 ${allProvs.length} 家，涉及 ${nModels} 个模型，明细见上方卡片）。`
       : unifiedEmptyText(),
   });
 }
@@ -862,11 +971,17 @@ function mergedProviders() {
   for (const p of state.providers) {
     const r = platformFor(p.id);
     const useP = r && r.status === "ok" && r.mode === "usage";
+    /* _why 说明这一家为什么没走官网：
+       empty  = 官网已接通，只是本统计区间内没有用量（不是故障，别写成「未接通」）
+       local  = 官网凭据没接通，或该平台官网不提供按天明细
+       platform = 用的就是官网数据 */
+    const why = useP ? "platform" : (r && r.status === "empty" ? "empty" : "local");
     out.push({
       id: p.id,
       name: p.name,
       usage: useP ? platUsageShape(r) : (p.usage || zeroUsage()),
       _src: useP ? "platform" : "local",
+      _why: why,
       _pending: useP ? null : r,
     });
     seen.add(p.id);
@@ -879,7 +994,7 @@ function mergedProviders() {
     if (r && r.status === "ok" && r.mode === "usage") {
       out.push({
         id: pid, name: r.provider_name || r.label || "平台",
-        usage: platUsageShape(r), _src: "platform", _pending: null,
+        usage: platUsageShape(r), _src: "platform", _why: "platform", _pending: null,
       });
     }
   }
@@ -904,7 +1019,7 @@ function unifiedEmptyHtml() {
 function unifiedEmptyText() {
   const c = (state.platform && state.platform.creds) || {};
   const anyCfg = Object.values(c).some((x) => x && x.configured);
-  return `统计区间（${state.rangeDays} 天）内暂无模型用量记录——` +
+  return `统计区间（${rangeText()}）内暂无模型用量记录——` +
     (anyCfg ? "官网侧与本机 CC Switch 记录均无数据。"
             : "从 CC Switch 启用对应提供商并调用后会出现在这里；点「平台凭据」接通官网可切换为账户实扣口径。");
 }
@@ -923,6 +1038,8 @@ function renderPlatformCards() {
   for (const pid of ids) {
     const r = u[pid] || {};
     if (r.mode === "usage" && r.status === "ok") continue;
+    /* 区间内没用量不是故障，别弹红框：图表里不出现，明细表按 0 列出即可 */
+    if (r.status === "empty") continue;
     host.appendChild(buildPlatformCard(r));
   }
   if (!host.children.length) return null;
@@ -954,7 +1071,7 @@ function buildPlatformCard(r) {
 function platformStatusPill(s) {
   const map = {
     ok: ["正常", "ok"], nokey: ["未配置", "warn"], expired: ["凭据失效", "err"],
-    error: ["查询失败", "err"], empty: ["区间内无数据", "warn"],
+    error: ["查询失败", "err"],
   };
   const m = map[s] || ["未知", "warn"];
   return el("span", "pc-pill " + m[1], m[0]);
@@ -1002,10 +1119,8 @@ function guideBody(r) {
 
 function errBody(r) {
   const out = el("div");
-  const title = r.status === "expired" ? "凭据已失效"
-    : r.status === "empty" ? "区间内没有数据" : "查询失败";
   const box = el("div", "errbox");
-  box.innerHTML = `<b>${title}</b>　<span>${esc(r.detail || "未知错误")}</span>`;
+  box.innerHTML = `<b>${r.status === "expired" ? "凭据已失效" : "查询失败"}</b>　<span>${esc(r.detail || "未知错误")}</span>`;
   out.appendChild(box);
   out.appendChild(platformActs(r, r.kind || "", r.status === "expired" ? "更新凭据" : "检查凭据"));
   return out;
@@ -1029,9 +1144,8 @@ function platformActs(r, kind, btnText) {
   return acts;
 }
 
-/* 把逐日数据整理成 {date: {seriesKey: value}} + 系列元信息 */
-function seriesOfDay(provs, isTok, includeUnmatched) {
-  const byModel = state.view === "model";
+/* 把逐日数据整理成 {date: {apiName: value}} + 系列元信息（按 API / 平台分色） */
+function seriesOfDay(provs, isTok) {
   const dayMap = {};
   const series = {};
   const valOf = (rec) => isTok
@@ -1041,31 +1155,9 @@ function seriesOfDay(provs, isTok, includeUnmatched) {
     if (!val) return;
     (dayMap[d] || (dayMap[d] = {}))[key] = (dayMap[d][key] || 0) + val;
   };
-  const scan = (m, mdays) => {
-    series[m] = series[m] || { name: m, acc: colorForModel(m) };
-    for (const [d, rec] of Object.entries(mdays || {})) add(d, m, valOf(rec));
-  };
-
   for (const p of provs) {
-    if (byModel) {
-      for (const [m, mdays] of Object.entries(p.usage.model_days || {})) scan(m, mdays);
-    } else {
-      series[p.name] = series[p.name] || { name: p.name, acc: visFor(p.name).acc };
-      for (const [d, rec] of Object.entries(p.usage.days || {})) add(d, p.name, valOf(rec));
-    }
-  }
-  /* 未归属模型（Codex / 官方直连等）也要进图，否则图会把真实大头漏掉、
-     与总览带 / 模型表的口径对不上 */
-  if (includeUnmatched !== false) {
-    const um = state.dataMain?.usage_unmatched_model_days || {};
-    if (byModel) {
-      for (const [m, mdays] of Object.entries(um)) scan(m, mdays);
-    } else {
-      series["未归属"] = series["未归属"] || { name: "未归属", acc: "#64748B" };
-      for (const mdays of Object.values(um)) {
-        for (const [d, rec] of Object.entries(mdays || {})) add(d, "未归属", valOf(rec));
-      }
-    }
+    series[p.name] = series[p.name] || { name: p.name, acc: visFor(p.name).acc };
+    for (const [d, rec] of Object.entries(p.usage.days || {})) add(d, p.name, valOf(rec));
   }
   return { dayMap, series };
 }
@@ -1078,7 +1170,7 @@ function renderChart(provs, opts) {
   wrap.querySelector(".chart-empty")?.remove();
   $("#legend").innerHTML = "";
 
-  const { dayMap, series } = seriesOfDay(provs, isTok, opts.includeUnmatched);
+  const { dayMap, series } = seriesOfDay(provs, isTok);
   const daysSorted = Object.keys(dayMap).sort();
 
   if (!provs.length || !daysSorted.length) {
@@ -1184,61 +1276,25 @@ function niceMax(v) {
   return m * p;
 }
 
-function renderModelTable(provs, opts) {
+/* 逐 API / 平台的用量表：一行一家，第二列标注该行数据来自官网还是本地回落 */
+function renderApiTable(provs, opts) {
   opts = opts || {};
-  const byModel = state.view === "model";
-  const unmatched = opts.unmatchedModels != null ? opts.unmatchedModels
-    : (state.dataMain?.usage_unmatched_models || []);
-  const base = [];
-
-  /* 模型 → 涉及哪些提供商（含未归属），用于「按模型」视图首列 */
-  const provsOfModel = {};
-  const touch = (model, name, acc) => {
-    const arr = provsOfModel[model] || (provsOfModel[model] = []);
-    if (!arr.some((x) => x.name === name)) arr.push({ name, acc });
-  };
-
+  const rows = [];
   for (const p of provs) {
     const u = p.usage || zeroUsage();
-    const vis = visFor(p.name);
+    const t = u.totals || zeroUsage().totals;
+    /* 该家最后一个真正有调用的日期 */
     const lastDay = Object.entries(u.days || {}).filter(([, r]) =>
         r.requests > 0 || r.cost > 0 ||
         ((r.input || 0) + (r.output || 0) + (r.cache_read || 0)) > 0)
       .map(([d]) => d).sort().pop() || null;
-    for (const m of u.models || []) {
-      touch(m.model, p.name, vis.acc);
-      base.push({
-        pid: p.id, name: p.name, acc: vis.acc, model: m.model,
-        req: m.requests, inp: m.input, out: m.output, cache: m.cache_read,
-        cost: m.cost, last: lastDay, costOnly: !!m.costOnly, noReq: !!m.noRequests,
-      });
-    }
-  }
-  /* 未归属到任何 CC Switch 提供商的模型（如直连官方 API、Codex 等） */
-  for (const m of unmatched) {
-    touch(m.model, "未归属", "#64748B");
-    base.push({
-      pid: "__unmatched__", name: "未归属", acc: "#64748B", model: m.model,
-      req: m.requests, inp: m.input, out: m.output, cache: m.cache_read,
-      cost: m.cost, last: null,
+    rows.push({
+      name: p.name, acc: visFor(p.name).acc, src: p._src, why: p._why,
+      costOnly: !!u.costOnly, noReq: !!u.noRequests,
+      req: t.requests || 0, inp: t.input || 0, out: t.output || 0,
+      cache: t.cache_read || 0, cost: t.cost || 0,
+      nModels: (u.models || []).length, last: lastDay,
     });
-  }
-
-  /* 按模型汇总：同一模型跨多个提供商的用量合并 */
-  let rows = base;
-  if (byModel) {
-    const agg = {};
-    for (const r of base) {
-      const o = agg[r.model] || (agg[r.model] = {
-        model: r.model, req: 0, inp: 0, out: 0, cache: 0, cost: 0, last: null,
-        costOnly: true, noReq: true, provs: provsOfModel[r.model] || [],
-      });
-      o.req += r.req; o.inp += r.inp; o.out += r.out; o.cache += r.cache; o.cost += r.cost;
-      if (!r.costOnly) o.costOnly = false;   /* 只要有一家给出 token 口径，就照常显示 */
-      if (!r.noReq) o.noReq = false;         /* 只要有一家给出请求数，就照常显示 */
-      if (r.last && (!o.last || r.last > o.last)) o.last = r.last;
-    }
-    rows = Object.values(agg);
   }
   rows.sort((a, b) => b.cost - a.cost);
   const sumCost = rows.reduce((s, r) => s + r.cost, 0) || 1e-9;
@@ -1247,19 +1303,10 @@ function renderModelTable(provs, opts) {
   tbody.innerHTML = "";
   if (!rows.length) {
     tbody.innerHTML = `<tr class="no-rows"><td colspan="9">${opts.emptyText ||
-      `统计区间（${state.rangeDays} 天）内暂无模型用量记录——从 CC Switch 启用对应提供商并调用后会自动出现。`}</td></tr>`;
+      `统计区间（${rangeText()}）内暂无用量记录——从 CC Switch 启用对应提供商并调用后会自动出现。`}</td></tr>`;
     $("#tableNote").textContent = opts.noteText || "";
     return;
   }
-
-  const firstCell = (r) => {
-    if (!byModel) {
-      return `<span class="pname"><i class="pd" style="background:${r.acc}"></i>${esc(r.name)}</span>`;
-    }
-    return `<span class="pstack">` + (r.provs || []).map((x) =>
-      `<span class="pname"><i class="pd" style="background:${x.acc}"></i>${esc(x.name)}</span>`
-    ).join("") + `</span>`;
-  };
 
   const tot = { req: 0, inp: 0, out: 0, cache: 0, cost: 0 };
   const anyTok = rows.some((r) => !r.costOnly);
@@ -1268,25 +1315,34 @@ function renderModelTable(provs, opts) {
   for (const r of rows) {
     tot.req += r.req; tot.inp += r.inp; tot.out += r.out; tot.cache += r.cache; tot.cost += r.cost;
     const pct = (r.cost / sumCost) * 100;
-    const barAcc = byModel ? ((r.provs && r.provs[0] && r.provs[0].acc) || "#64748B") : r.acc;
+    const localTitle = r.why === "empty"
+      ? "该家官网接口已接通，但本统计区间内官网没有用量记录，此处回落本机 CC Switch 记录（通常为 0）"
+      : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）";
+    const srcTag = r.src === "platform"
+      ? `<span class="src-tag plat" title="取自该平台官网接口，账户实际扣费口径">官网实扣</span>`
+      : `<span class="src-tag local" title="${localTitle}">本地记录</span>`;
+    const extra = (r.costOnly
+        ? `<span class="costonly-tag" title="该平台官网只提供金额，无 token / 请求数口径">金额口径</span>` : "")
+      + (r.noReq && !r.costOnly
+        ? `<span class="costonly-tag" title="该平台官网账单不提供请求数，仅有 token 与金额">无请求数</span>` : "");
     const tr = el("tr");
     tr.innerHTML = `
-      <td>${firstCell(r)}</td>
-      <td><span class="mname">${esc(r.model)}</span>${r.costOnly ? '<span class="costonly-tag" title="该平台官网只提供金额，无 token / 请求数口径">金额口径</span>' : ""}${r.noReq && !r.costOnly ? '<span class="costonly-tag" title="该平台官网账单不提供请求数，仅有 token 与金额">无请求数</span>' : ""}</td>
+      <td><span class="pname"><i class="pd" style="background:${r.acc}"></i>${esc(r.name)}</span></td>
+      <td>${srcTag}${extra}<span class="src-models">${r.nModels} 个模型</span></td>
       ${cell(!r.costOnly && !r.noReq, r.req)}
       ${cell(!r.costOnly, r.inp)}
       ${cell(!r.costOnly, r.out)}
       ${cell(!r.costOnly, r.cache)}
       <td class="num cost">${fmtUSD(r.cost)}</td>
-      <td class="num">${pct.toFixed(1)}%<span class="bar-mini"><i style="width:${Math.min(100, pct)}%;background:${barAcc}"></i></span></td>
+      <td class="num">${pct.toFixed(1)}%<span class="bar-mini"><i style="width:${Math.min(100, pct)}%;background:${r.acc}"></i></span></td>
       <td class="num dim">${r.last ? esc(r.last.slice(5)) : "—"}</td>`;
     tbody.appendChild(tr);
   }
   /* 合计行 */
   const trT = el("tr", "total-row");
   trT.innerHTML = `
-    <td>${byModel ? "合计" : "全部"}</td>
-    <td class="mname">${rows.length} ${byModel ? "个模型" : "条记录"}</td>
+    <td>全部</td>
+    <td class="src-cell">${rows.length} 家 API / 平台</td>
     ${cell(anyReq, tot.req)}
     ${cell(anyTok, tot.inp)}
     ${cell(anyTok, tot.out)}
@@ -1296,14 +1352,7 @@ function renderModelTable(provs, opts) {
     <td class="num dim">—</td>`;
   tbody.appendChild(trT);
 
-  const unr = state.dataMain?.usage_unmatched;
-  const unrModels = unmatched.length;
-  $("#tableNote").textContent = opts.noteText || ((byModel
-    ? `范围：最近 ${state.rangeDays} 天 · 按模型汇总（${rows.length} 个模型），跨提供商的同名模型已合并，首列标注来源。`
-    : `范围：最近 ${state.rangeDays} 天 · 按「提供商 × 模型」展开（${rows.length} 条）。`)
-    + (unr && unr.requests
-      ? ` 含 ${unrModels} 个未归属模型（灰色），通常来自 Claude 官方 / Codex 直连等未在 CC Switch 中配置的通道。`
-      : ` 用量与金额来自 CC Switch 本地记录（会话日志 / 代理日志），费用为估算口径。`));
+  $("#tableNote").textContent = opts.noteText || "";
 }
 
 /* ---------- 设置 ---------- */
@@ -1311,7 +1360,7 @@ function openSettings() {
   const cfg = state.cfg || {};
   $("#cfgRefresh").value = cfg.refresh_seconds ?? 300;
   $("#cfgLow").value = cfg.low_balance_cny ?? 30;
-  $("#cfgDays").value = cfg.days_default ?? 30;
+  $("#cfgDays").value = normRange(cfg.days_default);
   const box = $("#rechargeEdits");
   box.innerHTML = "";
   const names = state.providers.map((p) => p.name);
@@ -1347,7 +1396,7 @@ async function saveSettings() {
   const payload = {
     refresh_seconds: parseInt($("#cfgRefresh").value, 10) || 300,
     low_balance_cny: parseFloat($("#cfgLow").value) || 0,
-    days_default: parseInt($("#cfgDays").value, 10) || 30,
+    days_default: normRange($("#cfgDays").value),
     recharge_urls: {},
     low_balance_by_provider: {},
   };
@@ -1369,9 +1418,10 @@ async function saveSettings() {
     state.cfg = { ...(state.cfg || {}), refresh_seconds: payload.refresh_seconds,
       low_balance_cny: payload.low_balance_cny, days_default: payload.days_default,
       low_balance_by_provider: payload.low_balance_by_provider };
-    // 同步默认统计天数
-    state.rangeDays = payload.days_default;
-    document.querySelectorAll("#rangeSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.days === state.rangeDays));
+    // 同步默认统计范围
+    state.rangeKey = payload.days_default;
+    state.rangeDays = rangeDays(state.rangeKey);
+    syncRangeSeg();
     closeSettings();
     toast("设置已保存");
     scheduleAuto();
@@ -1557,6 +1607,11 @@ function schedulePlatform() {
   if (state.platTimer) clearInterval(state.platTimer);
   state.platTimer = setInterval(() => refreshPlatform(true), 60000);
 }
+/* 定价 / 推荐独立轮询：错峰时段到点切换、官方调价后都能及时反映 */
+function schedulePricing() {
+  if (state.priceTimer) clearInterval(state.priceTimer);
+  state.priceTimer = setInterval(() => refreshPricing(), 60000);
+}
 
 /* ---------- 事件绑定 ---------- */
 function bind() {
@@ -1586,21 +1641,10 @@ function bind() {
   $("#rangeSeg").addEventListener("click", async (e) => {
     const b = e.target.closest("button");
     if (!b) return;
-    document.querySelectorAll("#rangeSeg button").forEach((x) => x.classList.toggle("on", x === b));
-    state.rangeDays = +b.dataset.days;
+    state.rangeKey = b.dataset.days;
+    state.rangeDays = rangeDays(state.rangeKey);
+    syncRangeSeg();
     await refreshAll(true);
-  });
-
-  $("#viewSeg").addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (!b) return;
-    document.querySelectorAll("#viewSeg button").forEach((x) => x.classList.toggle("on", x === b));
-    state.view = b.dataset.view;
-    const hint = $("#viewHint");
-    if (hint) hint.textContent = state.view === "model"
-      ? "按模型汇总，跨提供商的同名模型已合并"
-      : "按「提供商 × 模型」展开，逐条列出";
-    renderDetail();
   });
 
   document.querySelectorAll(".chart-toggle input").forEach((r) => {
@@ -1619,11 +1663,13 @@ function bind() {
     await loadConfig();
   } catch (e) {}
   const cfg = state.cfg || {};
-  const d = parseInt((new URLSearchParams(location.search).get("days")) || "", 10);
-  state.rangeDays = (d >= 7 && d <= 365) ? d : (cfg.days_default || 30);
-  document.querySelectorAll("#rangeSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.days === state.rangeDays));
+  const q = new URLSearchParams(location.search).get("days");
+  state.rangeKey = RANGE_KEYS.includes(q) ? q : normRange(cfg.days_default);
+  state.rangeDays = rangeDays(state.rangeKey);
+  syncRangeSeg();
   scheduleAuto();
   schedulePlatform();
+  schedulePricing();
   startProviderWatcher();
   await refreshAll(false);
 })();

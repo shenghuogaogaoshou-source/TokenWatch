@@ -102,8 +102,15 @@ const OUT = [];
   add('智谱模型表出现「无请求数」标记', rows.some((r) => r.tag === '无请求数'), '-');
   add('智谱余额显示官网可用余额（¥ 金额）',
       bal.some((b) => /智谱|GLM/.test(b.name) && /可用余额/.test(b.text) && /¥[\d.]+/.test(b.text)), '-');
-  add('智谱余额显示资源包余量',
-      bal.some((b) => /智谱|GLM/.test(b.name) && /资源包余量/.test(b.text)), '-');
+  /* 资源包余量：有剩余就必须显示，用尽（remaining=0）就必须不显示。
+     账户状态会变，所以断言的是「界面 ⇔ 接口」的一致性，而不是某个固定数值。 */
+  const plat = await (await fetch(BASE.replace(/\/+$/, '') + '/api/platform?days=30')
+    .catch(() => ({ json: async () => ({}) }))).json().catch(() => ({}));
+  const zrec = Object.values(plat.usage || {}).find((r) => r && r.kind === 'zhipu') || {};
+  const packLeft = (((zrec.resource_pack || {}).remaining) || 0) > 0;
+  const packShown = bal.some((b) => /智谱|GLM/.test(b.name) && /资源包余量/.test(b.text));
+  add('智谱资源包余量：界面与接口一致（有剩余才显示）', packShown === packLeft,
+      '接口 remaining>0? ' + packLeft + ' · 界面显示? ' + packShown);
   add('官网覆盖家数 == 卡片数',
       new RegExp('官网实时 · ' + cards.length + ' 家').test(badge), badge);
   /* —— 交付后优化：票据期限标注 —— */

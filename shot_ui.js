@@ -21,18 +21,17 @@ const path = require('path');
 
   await page.screenshot({ path: out + '/ui_1_provider.png', fullPage: true });
 
-  const modelBtn = page.locator('#viewSeg button[data-view="model"]');
-  if (await modelBtn.count()) {
-    await modelBtn.click();
-    await page.waitForTimeout(1500);
-    await page.screenshot({ path: out + '/ui_2_model.png', fullPage: true });
+  const price = page.locator('#pricingPanel .price-card');
+  if (await price.count()) {
+    await page.locator('#pricingPanel').screenshot({ path: out + '/ui_2_pricing.png' });
+    await price.first().screenshot({ path: out + '/ui_3_price_card.png' });
   } else {
-    errs.push('viewSeg button not found');
+    errs.push('pricingPanel .price-card not found');
   }
 
   await page.click('#btnTheme');
   await page.waitForTimeout(1200);
-  await page.screenshot({ path: out + '/ui_3_dark.png', fullPage: true });
+  await page.screenshot({ path: out + '/ui_4_dark.png', fullPage: true });
 
   const rows = await page.locator('#modelRows tr').count();
   const note = await page.locator('#tableNote').textContent();
