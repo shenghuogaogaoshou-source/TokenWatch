@@ -84,12 +84,27 @@ const OUT = [];
 
   const checks = [];
   const add = (name, ok, got) => checks.push({ name, ok: !!ok, got });
+  /* 跳过：环境问题（票据过期 / 官网限流）不该把测试判红，但要在输出里留痕 */
+  const skip = (name, got) => checks.push({ name, ok: true, skip: true, got });
   add('无 #srcSeg 旧切换器', (await page.$('#srcSeg')) === null, '-');
   add('状态条显示官网实时', /官网实时/.test(badge), badge);
   add('卡片数 == 提供商数', cards.length === nProvApi, cards.length + ' vs ' + nProvApi);
   add('卡片名不重复（无兜底重复条目）', dupNames.length === 0, dupNames.join(',') || '-');
-  add('DeepSeek 卡片走官网口径',
-      cards.some((c) => /DeepSeek/.test(c.name) && /官网实时/.test(c.stripSrc)), '-');
+  /* 平台侧原始状态先拿一份：官网限流（429）/ 票据失效都属于环境问题，
+     不该被当成代码回归 —— 这时改验「界面有没有如实说明 + 正确回落」。 */
+  const plat = await (await fetch(BASE.replace(/\/+$/, '') + '/api/platform?days=30')
+    .catch(() => ({ json: async () => ({}) }))).json().catch(() => ({}));
+  const recOf = (kind) => Object.values(plat.usage || {}).find((r) => r && r.kind === kind) || {};
+  const dsrec = recOf('deepseek');
+  if (dsrec.status === 'error') {
+    skip('DeepSeek 官网口径断言（本次读取失败：' + String(dsrec.detail || '').slice(0, 36) + '）');
+    add('DeepSeek 读取失败时卡片如实标注并回落本地记录',
+        cards.some((c) => /DeepSeek/.test(c.name) && /读取失败|凭据失效/.test(c.stripSrc)),
+        cards.filter((c) => /DeepSeek/.test(c.name)).map((c) => c.stripSrc).join(' | ') || '-');
+  } else {
+    add('DeepSeek 卡片走官网口径',
+        cards.some((c) => /DeepSeek/.test(c.name) && /官网实时/.test(c.stripSrc)), '-');
+  }
   add('Kimi 卡片走官网口径', cards.some((c) => /Kimi/.test(c.name) && /官网实时/.test(c.stripSrc)), '-');
   add('Kimi 卡片标注仅金额', cards.some((c) => /Kimi/.test(c.name) && /仅提供金额/.test(c.stripSrc)), '-');
   add('Kimi 用量条收成 3 格', cards.some((c) => /Kimi/.test(c.name) && (c.cols.match(/px/g) || []).length === 3),
@@ -117,19 +132,18 @@ const OUT = [];
      这属于用户环境问题、不是代码回归：此时改验「失效提示 + 回落本地记录」，
      官网口径那几条标为跳过，避免一套绿测试被一张过期票据长期拖红。 */
   const zn = (c) => /智谱|GLM/.test(c.name);
-  const plat = await (await fetch(BASE.replace(/\/+$/, '') + '/api/platform?days=30')
-    .catch(() => ({ json: async () => ({}) }))).json().catch(() => ({}));
-  const zrec = Object.values(plat.usage || {}).find((r) => r && r.kind === 'zhipu') || {};
+  const zrec = recOf('zhipu');
   const zExpired = zrec.status === 'expired';
-  const skip = (name, got) => checks.push({ name, ok: true, skip: true, got });
-  if (zExpired) {
-    skip('智谱官网口径断言（票据已失效，需重新获取）', zrec.detail);
-    add('智谱票据失效时给出可操作提示',
-        /票据/.test(zrec.detail || '') && /重新获取/.test(zrec.detail || ''), zrec.detail);
-    add('智谱票据失效时卡片标注凭据失效',
-        cards.some((c) => zn(c) && /凭据失效/.test(c.stripSrc)),
+  const zDown = zrec.status === 'error';
+  if (zExpired || zDown) {
+    skip('智谱官网口径断言（本次读取失败：' + String(zrec.detail || '').slice(0, 30) + '）');
+    add('智谱读取失败时给出可操作提示',
+        /票据|重新获取|限流|稍后/.test(zrec.detail || ''), zrec.detail);
+    add('智谱读取失败时卡片如实标注并回落本地记录',
+        cards.some((c) => zn(c) && /凭据失效|读取失败/.test(c.stripSrc)),
         cards.filter(zn).map((c) => c.stripSrc).join(' | ') || '-');
-    add('智谱票据失效时明细表说明回落原因', /凭据已失效/.test(tableNote), tableNote.slice(0, 80));
+    add('智谱读取失败时明细表说明回落原因',
+        /凭据已失效|官网未接通/.test(tableNote), tableNote.slice(0, 80));
   } else {
     add('智谱卡片走官网口径', cards.some((c) => zn(c) && /官网实时/.test(c.stripSrc)), '-');
     add('智谱卡片标注不提供请求数',
@@ -203,6 +217,12 @@ const OUT = [];
     });
     add('按提供商阈值已写入 config.json',
         Object.values(lbp).some((v) => Number(v) === 9999), JSON.stringify(lbp));
+    /* 保存后要等界面按新阈值重绘（重绘会顺带刷新一遍数据，慢的时候 1.4s 不够），
+       直接等标记出现，别拿固定 sleep 赌时间 */
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('.bal-label .low-tag')]
+        .some((n) => /低于预警 ¥9999/.test(n.textContent || '')),
+      null, { timeout: 15000 }).catch(() => {});
     const lowTag = await page.$$eval('.bal-label .low-tag',
       (ns) => ns.map((n) => n.textContent.trim()));
     add('单家阈值触发卡片预警标记', lowTag.some((t) => /低于预警 ¥9999/.test(t)), lowTag.join(' | ') || '-');

@@ -1072,6 +1072,24 @@ def _to_cny(shape, currency="CNY"):
     return shape
 
 
+def _http_fail_msg(code, host=""):
+    """HTTP 层失败 → 给人看的说明。别一律说「响应无法解析」，
+    429 / 5xx / 401 是三种完全不同的处境，用户该做的事也不一样。"""
+    try:
+        code = int(code)
+    except Exception:
+        code = 0
+    if code == 0:
+        return "网络请求失败，无法连接 " + (host or "官网接口")
+    if code == 429:
+        return "官网接口限流（HTTP 429），请稍后重试"
+    if code in (401, 403):
+        return "官网拒绝了这次请求（HTTP %s），登录态可能已失效" % code
+    if code >= 500:
+        return "官网接口暂时故障（HTTP %s）" % code
+    return "HTTP %s 响应无法解析" % code
+
+
 def pu_deepseek(cred, days):
     token = str((cred or {}).get("token") or "").strip()
     if not token:
@@ -1099,7 +1117,7 @@ def pu_deepseek(cred, days):
     for (_y, _m, kind), (code, j) in zip(jobs, fetched):
         acc, mode = (tok_acc, "tokens") if kind == "amount" else (cost_acc, "cost")
         if j is None:
-            last_err = "HTTP %s 响应无法解析" % code
+            last_err = _http_fail_msg(code, "platform.deepseek.com")
             continue
         pcode = j.get("code")
         if pcode not in (0, 200, None) or (j.get("data") is None and j.get("biz_data") is None):
@@ -1550,6 +1568,10 @@ def pu_zhipu(cred, days):
 PLATFORM_CACHE = {"t": 0, "data": None, "days": None}
 PLATFORM_LOCK = threading.Lock()
 PLATFORM_TTL = 55   # 小于前端 60s 轮询间隔，保证每轮都拿到新数据，又不至于打爆供应商接口
+# 官网限流（429）后短暂冷却：DeepSeek 控制台接口对连续请求很敏感，
+# 60s 轮询叠加手动刷新很容易打到 429，越刷越失败。冷却期内不再发请求，
+# 直接回报可读原因（force=1 也照样尊重冷却，因为再打一次只会继续 429）。
+RL_UNTIL, RL_SECONDS = {}, 90
 
 
 _FETCHERS = {"deepseek": pu_deepseek, "kimi": pu_kimi, "zhipu": pu_zhipu}
@@ -1573,11 +1595,24 @@ def platform_usage_all(provs, days, force=False):
     results, lock, threads = {}, threading.Lock(), []
 
     def work(pid, meta):
-        fn = _FETCHERS.get(meta["kind"])
-        try:
-            r = fn(creds.get(meta["kind"]) or {}, days)
-        except Exception as e:
-            r = {"status": "error", "detail": str(e)[:200]}
+        k = meta["kind"]
+        with lock:
+            wait = RL_UNTIL.get(k, 0) - time.time()
+        if wait > 0:
+            r = {"status": "error",
+                 "detail": "官网接口限流中，%d 秒后自动重试" % max(1, int(wait))}
+        else:
+            fn = _FETCHERS.get(k)
+            try:
+                r = fn(creds.get(k) or {}, days)
+            except Exception as e:
+                r = {"status": "error", "detail": str(e)[:200]}
+            if r.get("status") == "error" and "429" in str(r.get("detail") or ""):
+                with lock:
+                    RL_UNTIL[k] = time.time() + RL_SECONDS
+            elif r.get("status") in ("ok", "empty"):
+                with lock:
+                    RL_UNTIL.pop(k, None)          # 恢复正常 → 解除冷却
         r["provider_id"] = meta["provider_id"]
         r["provider_name"] = meta["provider_name"]
         r["label"] = PLATFORM_SPEC[meta["kind"]]["label"]

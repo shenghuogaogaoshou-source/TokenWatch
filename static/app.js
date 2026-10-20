@@ -62,7 +62,7 @@ function localISO(offset) {
 const state = {
   providers: [], recharge: {}, cfg: null, rangeDays: 1, rangeKey: "month", metric: "cost",
   timer: null, platTimer: null, priceTimer: null, loading: 0,
-  dataMain: null, data7: null, providerSig: null,
+  dataMain: null, providerSig: null,
   platform: null,      // /api/platform 的响应（统一视图里始终尝试读取）
   platSig: null,       // 平台数据的签名，只有变化才重绘
   pricing: null,       // /api/pricing 的响应（分时段定价 + 当前时段推荐）
@@ -203,10 +203,14 @@ function platformCoveredIds() {
   return s;
 }
 
-/* 当前统计区间的合计：被官网覆盖的家用官网值，其余（含未归属模型）用本地记录 */
-function unifiedTotals7() {
+/* 当前统计区间的合计：被官网覆盖的家用官网值，其余（含未归属模型）用本地记录。
+   区间必须与趋势图 / 明细表完全一致 —— 以前这里写死取 7 天，
+   切到「本月 / 全年」时总览带和下方明细会对不上账。 */
+function unifiedTotals() {
   const covered = platformCoveredIds();
   const u = (state.platform && state.platform.usage) || {};
+  const n = Math.max(1, state.rangeDays || 1);
+  const from = localISO(n - 1);            // 区间最早一天（含）
   const t = { cost: 0, tok: 0, req: 0, platN: 0, localN: 0 };
   const acc = (rec) => {
     t.cost += rec.cost || 0;
@@ -214,18 +218,17 @@ function unifiedTotals7() {
              (rec.cache_read || 0) + (rec.cache_creation || 0);
     t.req += rec.requests || 0;
   };
-  /* 1) 官网口径 */
+  /* 1) 官网口径：只累加落在区间内的日期（接口可能给出窗口外的日期） */
   for (const pid of covered) {
     const days = u[pid].days || {};
-    for (let i = 0; i < 7; i++) {
-      const rec = days[localISO(i)];
-      if (rec) acc(rec);
+    for (const d of Object.keys(days)) {
+      if (d >= from) acc(days[d] || {});
     }
     t.platN++;
   }
-  /* 2) 本地兜底：仅算未被官网覆盖的提供商 */
-  const l7 = (state.data7 && state.data7.providers) || [];
-  for (const p of l7) {
+  /* 2) 本地兜底：仅算未被官网覆盖的提供商，且同样取当前区间 */
+  const locals = (state.dataMain && state.dataMain.providers) || [];
+  for (const p of locals) {
     if (covered.has(p.id) || !p.usage || !p.usage.totals) continue;
     acc(p.usage.totals);
     t.localN++;
@@ -303,13 +306,9 @@ async function refreshAll(quiet) {
     /* 官网要逐个直连供应商接口，可能慢；不让它拖住首屏 */
     const platP = getJSON("/api/platform?days=" + days + (quiet ? "" : "&force=1"))
       .catch(() => null);
-    const [main, d7] = await Promise.all([
-      getJSON("/api/data?days=" + days),
-      getJSON("/api/data?days=7"),
-    ]);
+    const main = await getJSON("/api/data?days=" + days);
     if (!main.ok) throw new Error(main.error || "读取失败");
     state.dataMain = main;
-    state.data7 = d7.ok ? d7 : null;
     state.providers = main.providers || [];
     state.providerSig = providerSigFrom(state.providers);
     const plat = await Promise.race([
@@ -439,34 +438,34 @@ function renderTape() {
     $("#tapeBalanceF").textContent = "暂无可用余额数据";
   }
 
-  const t7 = unifiedTotals7();
+  const tot = unifiedTotals();
   const rt = rangeText();               // 标签跟着统计范围走，别写死「近 7 日」
   const kCost = $("#tapeCost7K"); if (kCost) kCost.textContent = rt;
   const kTok = $("#tapeTok7K"); if (kTok) kTok.textContent = rt;
-  const anyPlat = t7.platN > 0;
+  const anyPlat = tot.platN > 0;
   const noteEl = $("#tapeCost7Note");
   if (noteEl) {
     noteEl.textContent = anyPlat
-      ? (t7.localN || t7.req ? "官网 " + t7.platN + " 家实扣口径" : "官网实扣口径")
+      ? (tot.localN || tot.req ? "官网 " + tot.platN + " 家实扣口径" : "官网实扣口径")
       : "本地记录";
   }
-  $("#tapeCost7V").textContent = money(t7.cost || 0);
+  $("#tapeCost7V").textContent = money(tot.cost || 0);
   const altEl = $("#tapeCost7Cny");
   if (altEl) {
     /* 主数字已经是人民币，这一行只交代口径：有没有掺本地记录、掺的那部分怎么来的 */
-    altEl.textContent = t7.cost > 0
-      ? (t7.localN
-          ? "含 " + t7.localN + " 家本地记录（原为美元，按 ¥" + fx + "/USD 折算）"
+    altEl.textContent = tot.cost > 0
+      ? (tot.localN
+          ? "含 " + tot.localN + " 家本地记录（原为美元，按 ¥" + fx + "/USD 折算）"
           : "全部为官网账户实际扣费口径")
       : (anyPlat ? "官网侧" + rt + "暂无消耗记录" : "暂无消耗记录");
   }
-  const srcF = t7.platN
-    ? "官网直连 " + t7.platN + " 家" + (t7.localN ? " + 本地兜底 " + t7.localN + " 家" : "")
+  const srcF = tot.platN
+    ? "官网直连 " + tot.platN + " 家" + (tot.localN ? " + 本地兜底 " + tot.localN + " 家" : "")
     : "按 CC Switch 本地记录";
-  $("#tapeCost7F").textContent = t7.req
-    ? t7.req + " 次请求 · " + srcF
+  $("#tapeCost7F").textContent = tot.req
+    ? tot.req + " 次请求 · " + srcF
     : (anyPlat ? rt + "官网侧暂无调用" : rt + "暂无调用记录");
-  $("#tapeTok7V").textContent = compactTok(t7.tok);
+  $("#tapeTok7V").textContent = compactTok(tot.tok);
   $("#tapeProviders").textContent = provs.map((p) => p.name).join(" · ") || "—";
 
   const cur = provs.find((p) => p.is_current) || provs[0];

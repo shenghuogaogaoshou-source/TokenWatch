@@ -193,7 +193,7 @@ function mkModelDays(models, seed) {
   console.log("来源说明           :", res.hint);
   console.log("凭据状态           :", res.cred);
   console.log("总览 7 日口径注记   :", res.tapeNote);
-  console.log("总览 7 日消耗       :", res.tapeCost, "|", res.tapeFoot);
+  console.log("总览区间消耗        :", res.tapeCost, "|", res.tapeFoot);
   console.log("总览 7 日 Token     :", res.tapeTok);
   console.log("--- 提供商卡片用量条 ---");
   res.cards.forEach((c) => console.log(`  ${String(c.name).padEnd(12)} ${String(c.src).padEnd(38)} req=${c.req} cost=${c.cost}`));
@@ -213,16 +213,16 @@ function mkModelDays(models, seed) {
   console.log("控制台错误         :", errors.length ? errors : "无");
   console.log("文字溢出           :", overflow.length ? overflow : "无");
 
-  // ---- 口径一致性：总览带 vs 趋势图（同样取近 7 天） ----
+  // ---- 口径一致性：总览带 vs 趋势图（同一统计区间，不再写死 7 天） ----
   const consist = await page.evaluate(() => {
-    const t = unifiedTotals7();
+    const t = unifiedTotals();
     const { dayMap } = seriesOfDay(mergedProviders(), false);
-    let chart7 = 0;
-    for (let i = 0; i < 7; i++) {
+    let chart = 0;
+    for (let i = 0; i < state.rangeDays; i++) {
       const d = localISO(i);
-      chart7 += Object.values(dayMap[d] || {}).reduce((s, x) => s + x, 0);
+      chart += Object.values(dayMap[d] || {}).reduce((s, x) => s + x, 0);
     }
-    return { tape: t.cost, chart: +chart7.toFixed(4), platN: t.platN, localN: t.localN };
+    return { tape: t.cost, chart: +chart.toFixed(4), platN: t.platN, localN: t.localN };
   });
   const diff = Math.abs(consist.tape - consist.chart);
   const consistOk = diff <= Math.max(0.02, consist.tape * 0.02);
@@ -234,7 +234,7 @@ function mkModelDays(models, seed) {
   console.log("  定价卡 / 首选 / 核实日期:", res.pricing.cards.length, "/", res.pricing.lead, "/", res.pricing.asOf,
               priceOk ? "\u2713" : "\u2717");
 
-  console.log("=== 口径一致性（近 7 日消耗）===");
+  console.log("=== 口径一致性（总览带 vs 趋势图，同一统计区间）===");
   console.log(`  总览带 ¥${consist.tape.toFixed(2)} vs 趋势图 ¥${consist.chart.toFixed(2)}  偏差 ¥${diff.toFixed(4)}  ${consistOk ? "✓ 一致" : "✗ 不一致"}`);
   console.log(`  官网覆盖 ${consist.platN} 家 · 本地兜底 ${consist.localN} 家 · 图例（逐家 API / 平台）: ${res.legend.join(" / ")}`);
 
@@ -249,7 +249,7 @@ function mkModelDays(models, seed) {
                 cur.tape.startsWith("¥") && cur.price.includes("¥") && !cur.dollars.length;
   console.log("=== 币种（人民币唯一口径）===");
   console.log("  明细表消耗列 :", cur.costCells.join(" / ") || "—");
-  console.log("  总览 7 日消耗 :", cur.tape, "  首选单价:", cur.price);
+  console.log("  总览区间消耗 :", cur.tape, "  首选单价:", cur.price);
   console.log("  残留美元符号 :", cur.dollars.length ? cur.dollars : "无", curOk ? "✓" : "✗");
 
   await page.screenshot({ path: path.join(SHOTS, "shot_unified_light.png"), fullPage: true });

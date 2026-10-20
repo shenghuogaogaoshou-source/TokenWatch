@@ -241,7 +241,9 @@ button:focus-visible, a:focus-visible {
   font-family: var(--mono); font-variant-numeric: tabular-nums;
   font-size: 12.5px; font-weight: 600; color: var(--ink-2);
   margin: 0 0 5px; line-height: 1.35;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* 这行会写「含 N 家本地记录（原为美元，已按 ¥7.1/USD 折算）」，
+     掺了本地记录时明显变长 —— 允许换行，别用 nowrap 把折算说明裁掉 */
+  white-space: normal; overflow-wrap: anywhere;
 }
 .tape-f {
   font-size: 11.5px; color: var(--ink-3);
