@@ -236,7 +236,11 @@ const OUT = [];
       const j = await (await fetch('/api/config', { cache: 'no-store' })).json();
       return j.config.low_balance_by_provider || {};
     });
-    add('清空后回落全局默认（config 里已移除）', Object.keys(lbp2).length === 0, JSON.stringify(lbp2));
+    /* 只断言「刚被清空的那家」已从配置里移除：
+       用户自己的 config 里本来就可能有别家的阈值，不能要求整张表为空 */
+    const cleared = Object.keys(lbp).filter((k) => Number(lbp[k]) === 9999);
+    add('清空后回落全局默认（config 里已移除）',
+        cleared.every((k) => !(k in lbp2)), JSON.stringify(lbp2));
   }
 
   /* —— 平台凭据弹窗里的票据期限 —— */
