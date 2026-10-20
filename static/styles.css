@@ -979,6 +979,12 @@ td.src-cell { color: var(--ink-3); font-size: 12px; }
   display: block; font-family: var(--sans); font-size: 10px; font-weight: 500;
   color: var(--ink-3); text-decoration: line-through;
 }
+/* 「实时」标记：官价表还没收录、由 CC Switch 价目表自动补充的新模型 */
+.pr-new {
+  margin-left: 6px; padding: 1px 6px; border-radius: 99px; font-style: normal;
+  font-family: var(--sans); font-size: 9.5px; font-weight: 650; letter-spacing: .2px;
+  vertical-align: 1px; background: var(--bg-2); color: var(--ink-3);
+}
 .pr-note {
   margin: 11px 0 0; padding-top: 10px; border-top: 1px dashed var(--line-2);
   font-size: 11px; line-height: 1.7; color: var(--ink-3);

@@ -203,7 +203,7 @@ function platformCoveredIds() {
   return s;
 }
 
-/* 近 7 日合计：被官网覆盖的家用官网值，其余（含未归属模型）用本地记录 */
+/* 当前统计区间的合计：被官网覆盖的家用官网值，其余（含未归属模型）用本地记录 */
 function unifiedTotals7() {
   const covered = platformCoveredIds();
   const u = (state.platform && state.platform.usage) || {};
@@ -375,11 +375,14 @@ function renderExpiryStrip() {
     return;
   }
   const urgent = near.some((x) => x.day <= 2);
+  const dead = near.filter((x) => x.day < 0).length;
   host.hidden = false;
   host.className = "exp-strip" + (urgent ? " urgent" : "");
-  host.innerHTML = `<span class="exp-head">${urgent
-    ? "⚠ 有票据即将过期，建议优先使用以下提供商，并尽快更新凭据"
-    : "ℹ 票据期限提醒：以下提供商的登录票据将在 7 天内到期"}</span>` +
+  host.innerHTML = `<span class="exp-head">${dead
+    ? `⚠ ${dead} 家票据已失效，官网数据已回落本地记录，请重新获取凭据`
+    : urgent
+      ? "⚠ 有票据即将过期，建议优先使用以下提供商，并尽快更新凭据"
+      : "ℹ 票据期限提醒：以下提供商的登录票据将在 7 天内到期"}</span>` +
     near.map((x) => `<span class="exp-chip${x.day <= 2 ? " urgent" : ""}" title="${esc(x.tip || "")}">
         ${esc(x.name)} · ${esc(x.txt.replace("有效期至 ", ""))}</span>`).join("") +
     `<button type="button" class="btn btn-ghost btn-sm" id="expGo">更新凭据</button>`;
@@ -437,6 +440,9 @@ function renderTape() {
   }
 
   const t7 = unifiedTotals7();
+  const rt = rangeText();               // 标签跟着统计范围走，别写死「近 7 日」
+  const kCost = $("#tapeCost7K"); if (kCost) kCost.textContent = rt;
+  const kTok = $("#tapeTok7K"); if (kTok) kTok.textContent = rt;
   const anyPlat = t7.platN > 0;
   const noteEl = $("#tapeCost7Note");
   if (noteEl) {
@@ -452,14 +458,14 @@ function renderTape() {
       ? (t7.localN
           ? "含 " + t7.localN + " 家本地记录（原为美元，按 ¥" + fx + "/USD 折算）"
           : "全部为官网账户实际扣费口径")
-      : (anyPlat ? "官网侧近 7 天暂无消耗记录" : "暂无消耗记录");
+      : (anyPlat ? "官网侧" + rt + "暂无消耗记录" : "暂无消耗记录");
   }
   const srcF = t7.platN
     ? "官网直连 " + t7.platN + " 家" + (t7.localN ? " + 本地兜底 " + t7.localN + " 家" : "")
     : "按 CC Switch 本地记录";
   $("#tapeCost7F").textContent = t7.req
     ? t7.req + " 次请求 · " + srcF
-    : (anyPlat ? "最近 7 天官网侧暂无调用" : "最近 7 天暂无调用记录");
+    : (anyPlat ? rt + "官网侧暂无调用" : rt + "暂无调用记录");
   $("#tapeTok7V").textContent = compactTok(t7.tok);
   $("#tapeProviders").textContent = provs.map((p) => p.name).join(" · ") || "—";
 
@@ -477,7 +483,7 @@ function shortDb() {
 /* ---------- 分时段定价 + 当前时段性价比推荐 ---------- */
 /* 价格单位统一为「元 / 百万 tokens」；综合单价 = 输入/缓存/输出三档按配比折算 */
 function price3(v) {
-  v = v || 0;
+  if (v == null) return "—";          // 官价表没收录、CC Switch 价目表也查不到的模型
   return "¥" + (v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3));
 }
 
@@ -498,7 +504,14 @@ function renderPricing() {
     mixEl.textContent = `输入 ${(p.mix.input * 100).toFixed(0)}% / 缓存命中 ${(p.mix.cache * 100).toFixed(0)}% / 输出 ${(p.mix.output * 100).toFixed(0)}%`;
   }
   if (noteEl) {
-    noteEl.textContent = `${p.now}（周${p.weekday}）· 综合单价按输入 / 缓存 / 输出配比折算，单位元 / 百万 tokens`;
+    let note = `${p.now}（周${p.weekday}）· 综合单价按输入 / 缓存 / 输出配比折算，单位元 / 百万 tokens`;
+    if (p.auto_models) {
+      note += ` · 另有 ${p.auto_models} 个在用的新模型按 CC Switch 价目表自动补充`;
+    }
+    if (p.noprice_models) {
+      note += ` · ${p.noprice_models} 个模型暂无可比价`;
+    }
+    noteEl.textContent = note;
   }
 
   const top = p.top || [];
@@ -529,8 +542,11 @@ function renderPricing() {
       const num = (x) => (x == null ? "—" : (x >= 10 ? x.toFixed(1) : x.toFixed(x >= 1 ? 2 : 3)));
       const off = m.discounted
         ? `<span class="pr-off" title="相较另一时段的全价">原价 ${price3(m.blended_baseline)}</span>` : "";
+      /* auto = 官价表还没收录、但本地已经在用（价格取自 CC Switch 价目表） */
+      const tag = m.source === "auto"
+        ? `<i class="pr-new" title="官价表未收录，价格取自 CC Switch 价目表并折算为人民币">实时</i>` : "";
       return `<tr>
-        <td class="pr-name">${esc(m.label)}</td>
+        <td class="pr-name">${esc(m.label)}${tag}</td>
         <td class="num">${num(pr.input)}</td>
         <td class="num">${num(pr.cache)}</td>
         <td class="num">${num(pr.output)}</td>
@@ -621,10 +637,12 @@ function expiryText(ex) {
     };
   }
   const d = ex.days;
-  const day = d < 0 ? "已过期 " + Math.abs(d) + " 天" : "剩 " + d + " 天";
+  /* 官网实测「票据失效」时没有具体到期时刻，只说失效，不编造「已过期 N 天」 */
+  const hasAt = !!ex.at;
+  const day = d < 0 ? (hasAt ? "已过期 " + Math.abs(d) + " 天" : "已失效") : "剩 " + d + " 天";
   const cls = ex.level === "expired" ? "err" : ex.level === "urgent" ? "urgent" : ex.level === "soon" ? "warn" : "";
   return {
-    txt: "有效期至 " + String(ex.at || "").slice(5, 10).replace("-", "/") + " · " + day,
+    txt: (hasAt ? "有效期至 " + String(ex.at).slice(5, 10).replace("-", "/") + " · " : "") + day,
     day: d, cls, tip: ex.source, est: !!ex.estimated,
   };
 }
@@ -921,7 +939,8 @@ function renderDetail() {
   const zeroN = allProvs.length - chartProvs.length;
   const nPlat = allProvs.filter((p) => p._src === "platform").length;
   const nEmpty = allProvs.filter((p) => p._why === "empty").length;
-  const nLocal = allProvs.length - nPlat - nEmpty;
+  const nExp = allProvs.filter((p) => p._why === "expired").length;
+  const nLocal = allProvs.length - nPlat - nEmpty - nExp;
   const nModels = allProvs.reduce((s, x) => s + ((x.usage.models || []).length), 0);
   const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
   const anyCostOnly = allProvs.some((p) => p.usage && p.usage.costOnly);
@@ -932,6 +951,7 @@ function renderDetail() {
     emptyText: unifiedEmptyText(),
     noteText: allProvs.length
       ? `范围：${rangeText()} · 逐家判定：${nPlat} 家取官网实际扣费口径` +
+        (nExp ? `，${nExp} 家官网凭据已失效、回落本机记录（需重新获取票据）` : "") +
         (nLocal ? `，${nLocal} 家官网未接通、回落本机 CC Switch 记录（估算口径）` : "") +
         (anyCostOnly ? "；带「金额口径」的平台官网只开放消费金额，不提供 token / 请求数" : "") +
         (anyNoReq ? "；带「无请求数」的平台官网账单不提供请求数，仅有 token 与金额" : "") +
@@ -971,10 +991,12 @@ function mergedProviders() {
     const r = platformFor(p.id);
     const useP = r && r.status === "ok" && r.mode === "usage";
     /* _why 说明这一家为什么没走官网：
-       empty  = 官网已接通，只是本统计区间内没有用量（不是故障，别写成「未接通」）
-       local  = 官网凭据没接通，或该平台官网不提供按天明细
+       empty   = 官网已接通，只是本统计区间内没有用量（不是故障，别写成「未接通」）
+       expired = 官网凭据已失效（需要重新获取票据，也不能写成「未接通」）
+       local   = 官网凭据没接通，或该平台官网不提供按天明细
        platform = 用的就是官网数据 */
-    const why = useP ? "platform" : (r && r.status === "empty" ? "empty" : "local");
+    const why = useP ? "platform"
+      : (r && r.status === "empty" ? "empty" : (r && r.status === "expired" ? "expired" : "local"));
     out.push({
       id: p.id,
       name: p.name,
@@ -1317,7 +1339,9 @@ function renderApiTable(provs, opts) {
     const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
     const localTitle = (r.why === "empty"
       ? "该家官网接口已接通，但本统计区间内官网没有用量记录，此处回落本机 CC Switch 记录（通常为 0）"
-      : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）") +
+      : r.why === "expired"
+        ? "该家官网凭据已失效（需要重新获取票据），当前回落本机 CC Switch 记录（估算口径）"
+        : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）") +
       "；本地记录原为美元，已按 ¥" + fxr + "/USD 折算";
     const srcTag = r.src === "platform"
       ? `<span class="src-tag plat" title="取自该平台官网接口，账户实际扣费口径">官网实扣</span>`

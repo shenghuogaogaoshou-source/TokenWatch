@@ -345,6 +345,43 @@ def collect_usage(provs, days):
     return {"per_provider": out, "totals": totals, "days": days}
 
 
+def models_in_use(provs, days=30):
+    """近 N 天真实发过请求的模型名 → {定价表 key: [model, ...]}。
+
+    只取模型名、不做聚合（比 collect_usage 轻得多），专门喂给定价面板：
+    官方一发新模型，只要本地开始用了，面板下一轮轮询就能看见，
+    不用等有人去改 PRICING 常量。归属不到已接入提供商的模型直接丢弃。
+    """
+    out = {}
+    try:
+        start_d = days_ago_str(days)
+        start_ts = int((datetime.datetime.now().replace(hour=0, minute=0, second=0,
+                                                        microsecond=0)
+                        - datetime.timedelta(days=days)).timestamp())
+        conn = connect_db()
+        rows = conn.execute(
+            "SELECT DISTINCT model FROM proxy_request_logs WHERE created_at >= ? "
+            "UNION SELECT DISTINCT model FROM usage_daily_rollups WHERE date >= ?",
+            (start_ts, start_d)).fetchall()
+        conn.close()
+    except Exception:
+        return out
+    for r in rows:
+        model = str(r["model"] or "").strip()
+        if not model:
+            continue
+        p = provider_for_model(model, provs)
+        if not p:
+            continue                      # 未接入提供商的模型不进面板
+        pk = PLATFORM_KIND_OF.get(p.get("kind"))
+        if not pk:
+            continue
+        lst = out.setdefault(pk, [])
+        if model not in lst:
+            lst.append(model)
+    return out
+
+
 # ---------------- 余额查询（直连官方接口） ----------------
 # ---- HTTP 出口：直连优先，失败再退回系统代理 ----
 # 本机开 Clash 时 urllib 会从注册表读到系统代理（127.0.0.1:7890）。实测这条链路
@@ -574,13 +611,18 @@ def balances_all(providers, force=False):
 
 # ---------------- 折算工具 ----------------
 def price_lookup():
+    """CC Switch 内置价目表：model_id → {input, output, cache}，单位美元 / 百万 token。
+    这张表是 CC Switch 自己算花费用的，也就是本地记录里 total_cost_usd 的来源，
+    所以「按它折算」能保证面板价格与实扣金额互相自洽。"""
     try:
         conn = connect_db()
-        rows = conn.execute("SELECT model_id, input_cost_per_million, output_cost_per_million "
-                            "FROM model_pricing").fetchall()
+        rows = conn.execute("SELECT model_id, input_cost_per_million, output_cost_per_million, "
+                            "cache_read_cost_per_million FROM model_pricing").fetchall()
         conn.close()
-        return {r["model_id"]: (float(r["input_cost_per_million"] or 0),
-                                float(r["output_cost_per_million"] or 0)) for r in rows}
+        return {r["model_id"]: {"input": float(r["input_cost_per_million"] or 0),
+                                "output": float(r["output_cost_per_million"] or 0),
+                                "cache": float(r["cache_read_cost_per_million"] or 0)}
+                for r in rows}
     except Exception:
         return {}
 
@@ -597,7 +639,7 @@ def estimate_tokens(provider, prov_usage, price_map):
         rate = _usd_cny()
         prices = [price_map[m] for m in provider["models"] if m in price_map]
         if prices:
-            blended = sum((a + b) / 2 for a, b in prices) / len(prices) * rate
+            blended = sum((p["input"] + p["output"]) / 2 for p in prices) / len(prices) * rate
         else:
             blended = rate
         source = "模型标价"
@@ -831,9 +873,15 @@ def cred_expiry(kind, cred):
             "long_lived": not claims_seen}
 
 
-def creds_meta():
-    """下发前端的凭据元信息：只给「是否已配置 + 掩码 + 票据期限」，绝不给原文"""
+def creds_meta(usage=None):
+    """下发前端的凭据元信息：只给「是否已配置 + 掩码 + 票据期限」，绝不给原文。
+
+    usage = platform_usage_all() 的结果。若某家本次官网返回值明确是「票据失效」，
+    就以实测为准覆盖按经验天数估算出来的期限 —— 否则界面会一边报「凭据已失效」、
+    一边说「还剩 6 天到期」，自相矛盾。
+    """
     d = load_platform_creds()
+    dead = {r.get("kind") for r in (usage or {}).values() if r.get("status") == "expired"}
     out = {}
     for k, spec in PLATFORM_SPEC.items():
         c = d.get(k) or {}
@@ -848,7 +896,11 @@ def creds_meta():
         out[k] = {"label": spec["label"], "mode": spec["mode"],
                   "configured": filled_all, "masked": fields}
         if any(str(c.get(f["key"]) or "").strip() for f in spec["fields"]):
-            out[k]["expiry"] = cred_expiry(k, c)
+            exp = cred_expiry(k, c)
+            if k in dead:
+                exp = {"at": None, "days": -1, "level": "expired",
+                       "source": "官网本次返回票据失效，需重新获取"}
+            out[k]["expiry"] = exp
     return out
 
 
@@ -1372,18 +1424,32 @@ def zhipu_account(cred, timeout=20):
 
 
 def zhipu_bills(cred, month, timeout=25):
-    """某账期的全部计费记录 → (rows, err)。err 为 None 表示成功。"""
+    """某账期的全部计费记录 → (rows, err)。err 为 None 表示成功。
+
+    ⚠ 智谱控制台失效时的返回很不规整：票据过期 / 被顶下线**不一定给 401**，
+    实测常见「HTTP 200 + 空 body」，json.loads 直接得到 None。若不单独识别，
+    界面只会显示含糊的「HTTP 200 响应无法解析」，用户根本不知道该重新登录，
+    所以这里把 200/401/403 的不可解析响应统一归到「票据失效」。
+    """
     url = (ZHIPU_API + "/finance/expenseBill/expenseBillList?billingMonth=%s"
            "&pageNum=1&pageSize=1000" % month)
     code, j = http_json(url, "GET", _zh_hdr(cred), None, timeout)
     if not isinstance(j, dict):
+        if code == 0:
+            return [], "网络请求失败，无法连接 bigmodel.cn"
+        if code in (200, 401, 403):
+            return [], "__EXPIRED__HTTP %s 但响应为空，票据已失效或被顶下线" % code
         return [], "HTTP %s 响应无法解析" % code
     rows = j.get("rows")
     if isinstance(rows, list):
         return rows, None
     msg = str(j.get("msg") or j.get("message") or "").strip()
     low = msg.lower()
-    if code in (401, 403) or "authorization" in low or "身份" in msg or "登录" in msg:
+    # 两种失效形态都要认：①HTTP 层 401/403；②HTTP 200 但 body 里是业务错误码 401
+    # （实测「令牌已过期或验证不正确」走的是这种，少了这句就会被当成普通查询失败）
+    if (code in (401, 403) or _num(j.get("code")) in (401, 403)
+            or "authorization" in low or "unauthorized" in low
+            or "令牌" in msg or "过期" in msg or "身份" in msg or "登录" in msg):
         return [], "__EXPIRED__" + (msg or ("HTTP %s" % code))
     return [], msg or ("HTTP %s" % code)
 
@@ -1404,7 +1470,7 @@ def pu_zhipu(cred, days):
         if err:
             if err.startswith("__EXPIRED__"):
                 return {"status": "expired",
-                        "detail": "登录票据无效或已过期，请重新获取（%s）" % err[11:]}
+                        "detail": "登录票据已失效，请重新获取（%s）" % err[11:]}
             last_err = err
             continue
         got = True
@@ -1527,8 +1593,10 @@ def platform_usage_all(provs, days, force=False):
         t.join(timeout=25)
     ordered = {}
     for pid, meta in targets.items():          # 按 CC Switch 中的顺序输出；未取到的给占位
+        # 线程没在 25s 内返回 = 官网接口超时。别写成「未配置凭据」——
+        # 那会让界面/测试以为凭据没填，实际只是这次网络慢，下一轮就正常。
         ordered[pid] = results.get(pid) or {
-            "status": "nokey", "detail": "未配置平台凭据",
+            "status": "error", "detail": "官网接口响应超时（>25 秒），稍后自动重试",
             "provider_id": meta["provider_id"],
             "provider_name": meta["provider_name"],
             "label": PLATFORM_SPEC[meta["kind"]]["label"],
@@ -1549,7 +1617,13 @@ def platform_usage_all(provs, days, force=False):
 #   · Kimi            全天同价，不随时段波动。
 # 只列 CC Switch 里实际接入的三家；每个模型都给出 peak / off 两组价，
 # 平台无时段差异时两组相同，由 slot.kind 说明。
-PRICING_AS_OF = "2026-09-16"
+#
+# ⚠ 这张表是**人工核实的基线**，不可能是实时的。为了「官方一发新模型就跟上」，
+#   pricing_snapshot() 会把「本地确实在用、但表里没有」的模型自动补进来
+#   （价格取 CC Switch 内置价目表 model_pricing × usd_cny，标 source=auto）。
+#   所以新增模型的第一优先级是让 CC Switch 更新价目表，而不是改这里；
+#   只有当某家官价与 CC Switch 价目表明显不一致时，才在这里写死覆盖。
+PRICING_AS_OF = "2026-10-20"
 
 PRICING = [
     {
@@ -1563,6 +1637,11 @@ PRICING = [
              "peak": {"input": 9.0, "cache": 0.30, "output": 27.0},
              "off": {"input": 4.5, "cache": 0.15, "output": 13.5}},
             {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash",
+             "peak": {"input": 3.0, "cache": 0.10, "output": 9.0},
+             "off": {"input": 1.5, "cache": 0.05, "output": 4.5}},
+            # deepseek-flash 是 CC Switch 里给 V4.1 Flash 的模型名，
+            # 其价目表标价与 v4-flash 完全一致，故沿用同一档价。
+            {"id": "deepseek-flash", "label": "DeepSeek V4.1 Flash",
              "peak": {"input": 3.0, "cache": 0.10, "output": 9.0},
              "off": {"input": 1.5, "cache": 0.05, "output": 4.5}},
         ],
@@ -1593,9 +1672,21 @@ PRICING = [
             {"id": "kimi-k3", "label": "Kimi K3",
              "peak": {"input": 20.0, "cache": 2.0, "output": 100.0},
              "off": {"input": 20.0, "cache": 2.0, "output": 100.0}},
+            # 以下三档按 CC Switch 价目表（美元/百万）× usd_cny(7.1) 折算，
+            # 与 kimi-k3 的标价校准基本吻合。
+            {"id": "kimi-k2.7-code", "label": "Kimi K2.7 Code",
+             "peak": {"input": 6.75, "cache": 1.35, "output": 28.4},
+             "off": {"input": 6.75, "cache": 1.35, "output": 28.4}},
+            {"id": "kimi-k2.7-code-highspeed", "label": "Kimi K2.7 Code HighSpeed",
+             "peak": {"input": 13.5, "cache": 2.7, "output": 56.8},
+             "off": {"input": 13.5, "cache": 2.7, "output": 56.8}},
+            {"id": "kimi-k2.6", "label": "Kimi K2.6",
+             "peak": {"input": 6.75, "cache": 1.14, "output": 28.4},
+             "off": {"input": 6.75, "cache": 1.14, "output": 28.4}},
         ],
     },
 ]
+
 
 
 def _minutes(hhmm):
@@ -1662,26 +1753,68 @@ def blended_price(prices, mix):
             + float((prices or {}).get("output") or 0) * wo)
 
 
-def pricing_snapshot():
+def _auto_model(model_id, plat, price_map, rate):
+    """定价表没收录、但本地确实在用的模型 → 用 CC Switch 价目表折成人民币补一行。
+
+    价目表只有「输入 / 输出 / 缓存命中」三档且是美元，乘 usd_cny 折成人民币；
+    平台按时段计价（DeepSeek）时，表价按高峰价处理，低谷沿用「半价」规则。
+    连价目表都查不到时**不丢模型**，置 prices=None，界面显示「待补价」并排在最后，
+    总比默默从推荐里消失、让人以为这个模型不存在要好。
+    """
+    src = price_map.get(model_id) or {}
+    inp, out = float(src.get("input") or 0), float(src.get("output") or 0)
+    cache = float(src.get("cache") or 0)
+    if inp <= 0 and out <= 0:
+        return {"id": model_id, "label": model_id, "peak": None, "off": None, "source": "auto"}
+    peak = {"input": round(inp * rate, 4),
+            "cache": round(cache * rate, 4),
+            "output": round(out * rate, 4)}
+    if ((plat.get("slot") or {}).get("kind") or "flat") == "peak":
+        off = {k: round(v / 2, 4) for k, v in peak.items()}
+    else:
+        off = dict(peak)
+    return {"id": model_id, "label": model_id, "peak": peak, "off": off, "source": "auto"}
+
+
+def pricing_snapshot(observed=None):
+    """observed：{定价表 key: [本地在用的模型 id]}，用于把新模型自动补进面板。"""
     now = datetime.datetime.now()
     mix = _price_mix()
+    rate = _usd_cny()
+    price_map = price_lookup() if observed else {}
     platforms, all_rows = [], []
+    n_auto, n_noprice = 0, 0
     for plat in PRICING:
         slot_key, slot_label, nxt = slot_state(plat["slot"], now)
+        models = list(plat["models"])
+        known = {m["id"] for m in models}
+        for mid in (observed or {}).get(plat["key"]) or []:
+            if mid in known:
+                continue
+            extra = _auto_model(mid, plat, price_map, rate)
+            models.append(extra)
+            known.add(mid)
+            if extra["peak"]:
+                n_auto += 1
+            else:
+                n_noprice += 1
         rows = []
-        for m in plat["models"]:
+        for m in models:
             cur = m["peak"] if slot_key == "peak" else m["off"]
             base = m["off"] if slot_key == "peak" else m["peak"]
-            b_cur = blended_price(cur, mix)
-            b_base = blended_price(base, mix)
+            if cur:
+                b_cur, b_base = blended_price(cur, mix), blended_price(base, mix)
+            else:
+                b_cur = b_base = None       # 没价 → 不参与比价（None 排最后）
             rows.append({
                 "id": m["id"], "label": m["label"],
                 "prices": cur, "baseline_prices": base,
-                "blended": round(b_cur, 4),
-                "blended_baseline": round(b_base, 4),
-                "discounted": b_cur < b_base - 1e-9,
+                "blended": (round(b_cur, 4) if b_cur is not None else None),
+                "blended_baseline": (round(b_base, 4) if b_base is not None else None),
+                "discounted": (b_cur is not None and b_cur < b_base - 1e-9),
+                "source": m.get("source") or "official",
             })
-        rows.sort(key=lambda r: r["blended"])
+        rows.sort(key=lambda r: (r["blended"] is None, r["blended"] or 0))
         platforms.append({
             "key": plat["key"], "label": plat["label"],
             "slot": slot_key, "slot_label": slot_label, "slot_note": plat.get("slot_note", ""),
@@ -1693,15 +1826,18 @@ def pricing_snapshot():
         for r in p["models"]:
             all_rows.append({**r, "platform": p["label"], "platform_key": p["key"],
                              "slot": p["slot"], "slot_label": p["slot_label"]})
-    all_rows.sort(key=lambda r: r["blended"])
+    all_rows.sort(key=lambda r: (r["blended"] is None, r["blended"] or 0))
+    priced = [r for r in all_rows if r["blended"] is not None]
     return {
         "as_of": PRICING_AS_OF,
         "now": now.strftime("%Y-%m-%d %H:%M"),
         "weekday": "一二三四五六日"[now.weekday()],
         "mix": {"input": round(mix[0], 4), "cache": round(mix[1], 4), "output": round(mix[2], 4)},
         "currency": "CNY",
+        "auto_models": n_auto,        # 官价表没收录、按 CC Switch 价目表自动补的
+        "noprice_models": n_noprice,  # 连价目表都查不到的（界面显示「待补价」）
         "platforms": platforms,
-        "top": all_rows[:3],
+        "top": priced[:3],
     }
 
 
@@ -1796,7 +1932,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                    "days": usage.get("days", days),
                                    "days_n": days})
             if path == "/api/pricing":
-                return self._json({"ok": True, **pricing_snapshot()})
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                try:
+                    pdays = max(1, min(365, int((q.get("days") or ["30"])[0])))
+                except Exception:
+                    pdays = 30
+                # 「实时更新最新模型」：先把本地在用的模型捞出来，官价表没收录的自动补行
+                provs, err = load_providers()
+                observed = models_in_use(provs, pdays) if not err else None
+                return self._json({"ok": True, **pricing_snapshot(observed)})
             if path == "/api/platform":
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 try:
@@ -1807,11 +1951,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 provs, err = load_providers()
                 if err:
                     return self._json({"ok": False, "error": err})
+                usage = platform_usage_all(provs, days, force=force)
                 return self._json({"ok": True,
-                                   "creds": creds_meta(),
+                                   "creds": creds_meta(usage),   # 传 usage：票据失效以实测为准
                                    "spec": PLATFORM_SPEC,
                                    "curl_ok": bool(CURL_BIN),
-                                   "usage": platform_usage_all(provs, days, force=force),
+                                   "usage": usage,
                                    "days": days})
             if path == "/api/open":
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

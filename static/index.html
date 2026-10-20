@@ -58,23 +58,23 @@
     <span class="sec-note">余额实时查询 · 用量以官网实扣口径优先，缺失自动回落本地记录</span>
   </div>
   <section class="tape" aria-label="汇总">
-    <div class="tape-item" id="tapeBalance">
+    <div class="tape-item">
       <div class="tape-k">可用余额 <span class="tape-note">充值制账户合计</span></div>
       <div class="tape-v" id="tapeBalanceV">—</div>
       <div class="tape-f" id="tapeBalanceF">按官方接口实时查询</div>
     </div>
-    <div class="tape-item" id="tapeCost7">
-      <div class="tape-k">近 7 日消耗 <span class="tape-note" id="tapeCost7Note">官网优先</span></div>
+    <div class="tape-item">
+      <div class="tape-k"><span id="tapeCost7K">本月</span>消耗 <span class="tape-note" id="tapeCost7Note">官网优先</span></div>
       <div class="tape-v" id="tapeCost7V">—</div>
       <div class="tape-alt" id="tapeCost7Cny">—</div>
       <div class="tape-f" id="tapeCost7F">按 CC Switch 用量日志统计</div>
     </div>
-    <div class="tape-item" id="tapeTok7">
-      <div class="tape-k">近 7 日 Token <span class="tape-note">输入+输出+缓存</span></div>
+    <div class="tape-item">
+      <div class="tape-k"><span id="tapeTok7K">本月</span> Token <span class="tape-note">输入+输出+缓存</span></div>
       <div class="tape-v" id="tapeTok7V">—</div>
       <div class="tape-f">已接入提供商：<b id="tapeProviders">—</b></div>
     </div>
-    <div class="tape-item" id="tapeActive">
+    <div class="tape-item">
       <div class="tape-k">监控状态</div>
       <div class="tape-v tape-v-sm" id="tapeActiveV">—</div>
       <div class="tape-f" id="tapeActiveF">数据目录：<span id="tapeDb">~/.cc-switch/cc-switch.db</span></div>
@@ -150,7 +150,7 @@
 
   <footer class="foot">
     <p><b>数据来源：</b>余额与用量均尽量取自各平台官方接口（用你的网页登录态直连供应商控制台，即账户实际扣费口径）；官网未接通或该平台不提供明细时，自动回落为该提供商的 <strong>CC Switch 本地记录</strong>，两者在同一个视图里合成展示、逐家标注来源。<strong>只统计已在 CC Switch 中接入的提供商</strong>，未接入通道（例如 Codex 直连的 gpt 系列）的用量不会出现在本页。平台凭据只保存在本机应用数据目录的 <code>platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
-    <p><b>说明：</b>「当前时段与性价比推荐」里的价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），该配比可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算。<strong>页面所有金额都是人民币</strong>：三家官网本来返回人民币；只有 CC Switch 本地记录是美元计价，已按 ¥<span id="fxRate">7.10</span>/USD 折成人民币（可在 <code>config.json</code> 的 <code>usd_cny</code> 里改汇率）。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
+    <p><b>说明：</b>「当前时段与性价比推荐」里的价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），该配比可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。官价表还没收录、但本地已经在用的新模型，会自动按 CC Switch 价目表折算并标「实时」，不必改代码。Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算。<strong>页面所有金额都是人民币</strong>：三家官网本来返回人民币；只有 CC Switch 本地记录是美元计价，已按 ¥<span id="fxRate">7.10</span>/USD 折成人民币（可在 <code>config.json</code> 的 <code>usd_cny</code> 里改汇率）。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），若官网本次查询直接回报票据失效，则以实测为准标「已失效」并回落本地记录；票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
   </footer>
 </main>
 

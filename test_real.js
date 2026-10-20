@@ -17,13 +17,18 @@ const OUT = [];
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
 
+  // 首次进入页面会带 force=1 拉一遍三家官网，冷启动可能要十几秒。
+  // 必须等这个响应真正落地再读 DOM，否则会读到「平台数据还没到」的中间态，
+  // 误判成「所有家都回落本地记录」（曾经就是这么偶发红的）。
+  const platDone = page.waitForResponse(
+    (r) => r.url().includes('/api/platform') && r.request().method() === 'GET' && r.status() === 200,
+    { timeout: 120000 }).catch(() => null);
   await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 40000 });
-  // 等平台数据落地（状态条不再是「读取中」）
-  await page.waitForFunction(() => {
-    const b = document.querySelector('#srcBadge');
-    return b && !/读取中/.test(b.textContent);
-  }, null, { timeout: 60000 }).catch(() => {});
-  await page.waitForTimeout(3500);
+  await platDone;
+  await page.waitForFunction(
+    () => document.querySelectorAll('#modelRows tr').length > 0,
+    null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(1500);
 
   const badge = (await page.textContent('#srcBadge').catch(() => '') || '').trim();
   const hint = (await page.textContent('#srcHint').catch(() => '') || '').trim();
@@ -107,32 +112,50 @@ const OUT = [];
   add('模型表出现「金额口径」标记', rows.some((r) => r.tag === '金额口径'), '-');
   add('标记行的 token 列显示 — 而非 0',
       rows.filter((r) => r.tag === '金额口径').every((r) => r.cells[2] === '—'), '-');
-  /* —— 智谱 GLM：官网费用账单口径（有 token、无请求数） —— */
+  /* —— 智谱 GLM：官网费用账单口径（有 token、无请求数） ——
+     智谱凭据是控制台会话票据（约 7 天），天然会过期。票据一失效，官网口径本就取不到数，
+     这属于用户环境问题、不是代码回归：此时改验「失效提示 + 回落本地记录」，
+     官网口径那几条标为跳过，避免一套绿测试被一张过期票据长期拖红。 */
   const zn = (c) => /智谱|GLM/.test(c.name);
-  add('智谱卡片走官网口径', cards.some((c) => zn(c) && /官网实时/.test(c.stripSrc)), '-');
-  add('智谱卡片标注不提供请求数',
-      cards.some((c) => zn(c) && /不提供请求数/.test(c.stripSrc)), '-');
-  add('智谱卡片「请求」显示 — 而非 0',
-      cards.some((c) => zn(c) && c.stats.some((s) => s.k === '请求' && s.v === '—')), '-');
-  add('智谱用量条保留 4 格（有 token 口径）',
-      cards.some((c) => zn(c) && (c.cols.match(/px/g) || []).length === 4),
-      cards.map((c) => c.name + ':' + (c.cols.match(/px/g) || []).length).join(' '));
-  add('智谱卡片有正数 token',
-      cards.some((c) => zn(c) && c.stats.some((s) => /tok/.test(s.k) && s.v !== '0' && s.v !== '—')), '-');
-  add('智谱模型表出现「无请求数」标记', rows.some((r) => r.tag === '无请求数'), '-');
-  add('智谱余额显示官网可用余额（¥ 金额）',
-      bal.some((b) => /智谱|GLM/.test(b.name) && /可用余额/.test(b.text) && /¥[\d.]+/.test(b.text)), '-');
-  /* 资源包余量：有剩余就必须显示，用尽（remaining=0）就必须不显示。
-     账户状态会变，所以断言的是「界面 ⇔ 接口」的一致性，而不是某个固定数值。 */
   const plat = await (await fetch(BASE.replace(/\/+$/, '') + '/api/platform?days=30')
     .catch(() => ({ json: async () => ({}) }))).json().catch(() => ({}));
   const zrec = Object.values(plat.usage || {}).find((r) => r && r.kind === 'zhipu') || {};
+  const zExpired = zrec.status === 'expired';
+  const skip = (name, got) => checks.push({ name, ok: true, skip: true, got });
+  if (zExpired) {
+    skip('智谱官网口径断言（票据已失效，需重新获取）', zrec.detail);
+    add('智谱票据失效时给出可操作提示',
+        /票据/.test(zrec.detail || '') && /重新获取/.test(zrec.detail || ''), zrec.detail);
+    add('智谱票据失效时卡片标注凭据失效',
+        cards.some((c) => zn(c) && /凭据失效/.test(c.stripSrc)),
+        cards.filter(zn).map((c) => c.stripSrc).join(' | ') || '-');
+    add('智谱票据失效时明细表说明回落原因', /凭据已失效/.test(tableNote), tableNote.slice(0, 80));
+  } else {
+    add('智谱卡片走官网口径', cards.some((c) => zn(c) && /官网实时/.test(c.stripSrc)), '-');
+    add('智谱卡片标注不提供请求数',
+        cards.some((c) => zn(c) && /不提供请求数/.test(c.stripSrc)), '-');
+    add('智谱卡片「请求」显示 — 而非 0',
+        cards.some((c) => zn(c) && c.stats.some((s) => s.k === '请求' && s.v === '—')), '-');
+    add('智谱用量条保留 4 格（有 token 口径）',
+        cards.some((c) => zn(c) && (c.cols.match(/px/g) || []).length === 4),
+        cards.map((c) => c.name + ':' + (c.cols.match(/px/g) || []).length).join(' '));
+    add('智谱卡片有正数 token',
+        cards.some((c) => zn(c) && c.stats.some((s) => /tok/.test(s.k) && s.v !== '0' && s.v !== '—')), '-');
+    add('智谱模型表出现「无请求数」标记', rows.some((r) => r.tag === '无请求数'), '-');
+    add('智谱余额显示官网可用余额（¥ 金额）',
+        bal.some((b) => /智谱|GLM/.test(b.name) && /可用余额/.test(b.text) && /¥[\d.]+/.test(b.text)), '-');
+  }
+  /* 资源包余量：有剩余就必须显示，用尽（remaining=0）就必须不显示。
+     账户状态会变，所以断言的是「界面 ⇔ 接口」的一致性，而不是某个固定数值。 */
   const packLeft = (((zrec.resource_pack || {}).remaining) || 0) > 0;
   const packShown = bal.some((b) => /智谱|GLM/.test(b.name) && /资源包余量/.test(b.text));
   add('智谱资源包余量：界面与接口一致（有剩余才显示）', packShown === packLeft,
       '接口 remaining>0? ' + packLeft + ' · 界面显示? ' + packShown);
-  add('官网覆盖家数 == 卡片数',
-      new RegExp('官网实时 · ' + cards.length + ' 家').test(badge), badge);
+  /* 状态条的覆盖家数应当等于「真正走了官网」的卡片数（凭据失效的那家不算） */
+  const nLive = cards.filter((c) => /官网实时/.test(c.stripSrc)).length;
+  add('状态条覆盖家数 == 走官网的卡片数',
+      nLive === 0 ? /本地记录/.test(badge)
+                  : new RegExp('官网实时 · ' + nLive + ' 家').test(badge), badge);
   /* —— 交付后优化：票据期限标注 —— */
   const expLines = await page.$$eval('.est-line.exp',
     (ns) => ns.map((n) => n.textContent.replace(/\s+/g, ' ').trim()));
@@ -144,9 +167,9 @@ const OUT = [];
     shown: !n.hidden, text: n.textContent.replace(/\s+/g, ' ').trim(),
   })).catch(() => null);
   add('票据提醒条元素存在', !!stripInfo, stripInfo ? (stripInfo.shown ? 'shown' : 'hidden') : 'missing');
-  add('提醒条内容含提供商与剩余天数',
+  add('提醒条内容含提供商与票据状态',
       !stripInfo || !stripInfo.shown ||
-      (/剩 \d+ 天|已过期/.test(stripInfo.text) && /DeepSeek|Kimi|智谱|GLM/.test(stripInfo.text)),
+      (/剩 \d+ 天|已过期|已失效/.test(stripInfo.text) && /DeepSeek|Kimi|智谱|GLM/.test(stripInfo.text)),
       stripInfo ? (stripInfo.shown ? stripInfo.text.slice(0, 90) : 'hidden') : '-');
   add('趋势图有柱子', bars > 0, String(bars));
   add('表注说明折算与金额口径', /折算/.test(tableNote) && /金额口径/.test(tableNote), '-');
@@ -209,8 +232,11 @@ const OUT = [];
   fs.writeFileSync(path.join(SHOTS, 'real_report.json'), JSON.stringify(report, null, 1), 'utf-8');
 
   console.log('== 验收 ==');
-  for (const c of checks) console.log('  ' + (c.ok ? 'PASS' : 'FAIL') + '  ' + c.name + (c.got && c.got !== '-' ? '   [' + c.got + ']' : ''));
-  const fails = checks.filter((c) => !c.ok);
+  for (const c of checks) {
+    const tag = c.skip ? 'SKIP' : (c.ok ? 'PASS' : 'FAIL');
+    console.log('  ' + tag + '  ' + c.name + (c.got && c.got !== '-' ? '   [' + c.got + ']' : ''));
+  }
+  const fails = checks.filter((c) => !c.ok && !c.skip);
   console.log(fails.length ? '\n>>> ' + fails.length + ' 项未通过' : '\n>>> 全部通过');
   console.log('\n== 状态条 ==');
   console.log('  badge :', badge);
