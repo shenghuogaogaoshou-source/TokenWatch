@@ -127,19 +127,72 @@ def provider_models(env):
     return out
 
 
+# 数据来源：优先 CC Switch 数据库；没有它时回落内置目录（见 builtin_providers）
+PROVIDER_SOURCE = {"mode": "cc-switch", "note": ""}
+
+# 内置目录：没有 CC Switch 也能用的三家。id 固定，前端/缓存都靠它做键，
+# 所以不能随机生成，否则每次刷新都会被当成「提供商变了」而强制重查余额。
+BUILTIN_PROVIDER_DEFS = [
+    {"id": "builtin-deepseek", "name": "DeepSeek", "kind": "deepseek",
+     "website_url": "https://platform.deepseek.com"},
+    {"id": "builtin-kimi", "name": "Kimi", "kind": "moonshot",
+     "website_url": "https://platform.kimi.com"},
+    {"id": "builtin-zhipu", "name": "智谱 GLM", "kind": "zhipu_plan",
+     "website_url": "https://bigmodel.cn"},
+]
+
+
+def builtin_providers():
+    """没有 CC Switch 时的内置目录，只保留三家能直连官网的提供商。
+
+    官网接口本身就给「逐日 + 逐模型」明细，凭据又独立存在 platform_creds.json，
+    所以「只登录各家控制台」也能把趋势图、明细表、余额、实扣跑全，
+    唯一丢掉的是「官网取不到时回落本地记录」和「价目表自动补新模型」。
+    模型清单直接取自 PRICING（与定价面板同源），因此不依赖本地库也能估算。
+    """
+    out = []
+    for d in BUILTIN_PROVIDER_DEFS:
+        pk = PLATFORM_KIND_OF.get(d["kind"])
+        plat = next((p for p in PRICING if p["key"] == pk), None)
+        out.append({
+            "id": d["id"], "name": d["name"], "base_url": "",
+            "api_key_masked": "", "_key": "",
+            "website_url": d["website_url"], "is_current": False,
+            "kind": d["kind"],
+            "models": [m["id"] for m in (plat or {}).get("models") or []],
+        })
+    return out
+
+
+def _builtin_mode(note):
+    """切到内置目录模式；note 会原样给前端做提示（说明为什么没走 CC Switch）"""
+    PROVIDER_SOURCE["mode"] = "builtin"
+    PROVIDER_SOURCE["note"] = note
+    return builtin_providers(), None
+
+
 def load_providers():
-    """读取并过滤提供商；排除官方 / Codex / Claude 官方相关"""
+    """读取并过滤提供商；排除官方 / Codex / Claude 官方相关。
+
+    ⭐ 没有 CC Switch（未安装 / 库为空）时不再整体报错，而是回落到内置的三家目录。
+    以前这里直接返回错误，前端只能显示「无法读取监控数据」，等于把「只想登录
+    官网控制台」的用户挡在门外。
+    """
+    if not os.path.exists(DB_PATH):
+        return _builtin_mode("未检测到 CC Switch 数据库")
     try:
         conn = connect_db()
     except Exception as e:
-        return None, f"无法打开 CC Switch 数据库: {e}"
+        return _builtin_mode("CC Switch 数据库打不开：%s" % e)
     providers = []
     try:
         rows = conn.execute("SELECT * FROM providers ORDER BY sort_index, created_at").fetchall()
     except Exception as e:
         conn.close()
-        return None, f"读取 providers 表失败: {e}"
+        return _builtin_mode("读取 CC Switch providers 表失败：%s" % e)
     conn.close()
+    if not rows:
+        return _builtin_mode("CC Switch 里还没有任何提供商")
     for r in rows:
         env, auth, cfg = env_of(r)
         meta = cfg.get("meta") or {}
@@ -180,6 +233,8 @@ def load_providers():
             "website_url": url, "is_current": is_current,
             "kind": kind, "models": models,
         })
+    PROVIDER_SOURCE["mode"] = "cc-switch"
+    PROVIDER_SOURCE["note"] = ""
     return providers, None
 
 
@@ -234,11 +289,31 @@ def days_ago_str(n):
     return (datetime.date.today() - datetime.timedelta(days=n)).isoformat()
 
 
+def _days_set(days):
+    """统计窗口内的全部日期（含今天，共 days 天）。官网与本地口径都必须用它，
+    否则「本地记录多算一天」——曾经就是这样和官网实扣对不上账的。"""
+    today = datetime.date.today()
+    return set((today - datetime.timedelta(days=i)).isoformat()
+               for i in range(days - 1, -1, -1))
+
+
+def _months_of(days):
+    """统计窗口涉及的账期（YYYY-MM）。多取的月份会白跑一次接口，故按 days 天算。"""
+    today = datetime.date.today()
+    return sorted({(today - datetime.timedelta(days=i)).strftime("%Y-%m")
+                   for i in range(max(1, days))})
+
+
 def collect_usage(provs, days):
-    """合并 proxy_request_logs 与 usage_daily_rollups，按提供商/模型/日期聚合"""
-    start_d = days_ago_str(days)
+    """合并 proxy_request_logs 与 usage_daily_rollups，按提供商/模型/日期聚合
+
+    统计窗口是「含今天在内的 days 个自然日」，即 [今天-(days-1), 今天]。
+    起算点曾经写成 days_ago_str(days) / today0 - days 天，等于把窗口前多算一整天，
+    和官网口径（_build_platform_shape 用的正是 days 天）对不上账，故统一成 days-1。
+    """
+    start_d = days_ago_str(days - 1)
     today0 = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    start_ts = int((today0 - datetime.timedelta(days=days)).timestamp())
+    start_ts = int((today0 - datetime.timedelta(days=days - 1)).timestamp())
     # CC Switch 的 total_cost_usd / model_pricing 都是美元计价，
     # 而本工具对外只用人民币一种口径，所以入库前统一乘汇率折成人民币。
     rate = _usd_cny()
@@ -246,6 +321,7 @@ def collect_usage(provs, days):
     empty = {"requests": 0, "success": 0, "input": 0, "output": 0,
              "cache_read": 0, "cache_creation": 0, "cost": 0.0}
     by = {}  # key: (pid, model, date) -> dict  (pid 为归属 provider id, None 表示未归属)
+    days_set = _days_set(days)          # 与趋势图 / 官网口径同一个窗口
     try:
         conn = connect_db()
         cur = conn.cursor()
@@ -257,8 +333,8 @@ def collect_usage(provs, days):
         for row in cur.fetchall():
             d = dict(row)
             date = epoch_to_iso(d.get("created_at"))
-            if not date:
-                continue
+            if not date or date not in days_set:
+                continue          # 窗口外（含 SQL 边界那一天）一律不计，保持与官网同口径
             p = provider_for_model(d.get("model"), provs)
             if not p:
                 continue          # 归属不到已接入提供商 → 不计入（未连接的模型不在界面出现）
@@ -282,8 +358,8 @@ def collect_usage(provs, days):
         for row in cur.fetchall():
             d = dict(row)
             date = d["date"]
-            if not date:
-                continue
+            if not date or date not in days_set:
+                continue          # 同上：窗口外不计
             p = provider_for_model(d.get("model"), provs)
             if not p:
                 continue          # 同上：只统计已接入提供商
@@ -304,13 +380,14 @@ def collect_usage(provs, days):
                 pass
         conn.close()
     except Exception as e:
-        return {"error": str(e)}
+        # 内置目录模式（没有 CC Switch）会走到这里：本地记录本来就为空，
+        # 不能把 {"error": …} 抛给 /api/data —— 那里按 per_provider 取值会 KeyError。
+        return {"per_provider": {}, "totals": dict(empty), "days": days,
+                "error": str(e)}
 
     # 汇聚输出（只含已接入提供商）
     prov_map = {p["id"]: p for p in provs}
     out = {}
-    days_set = set((datetime.date.today() - datetime.timedelta(days=i)).isoformat()
-                   for i in range(days - 1, -1, -1))
     for (pid, model, date), e in by.items():
         p = prov_map.get(pid)
         if not p:
@@ -354,10 +431,11 @@ def models_in_use(provs, days=30):
     """
     out = {}
     try:
-        start_d = days_ago_str(days)
+        # 与统计口径一致：含今天在内的 days 个自然日
+        start_d = days_ago_str(max(1, days - 1))
         start_ts = int((datetime.datetime.now().replace(hour=0, minute=0, second=0,
                                                         microsecond=0)
-                        - datetime.timedelta(days=days)).timestamp())
+                        - datetime.timedelta(days=max(1, days - 1))).timestamp())
         conn = connect_db()
         rows = conn.execute(
             "SELECT DISTINCT model FROM proxy_request_logs WHERE created_at >= ? "
@@ -427,10 +505,18 @@ def http_get(url, headers, timeout=10, retries=1):
 
 
 def balance_deepseek(p, timeout=12):
+    # 没有 CC Switch 时 p["_key"] 为空 → 用「平台凭据」里可选的 api_key 兜底。
+    # DeepSeek 控制台没有开放余额查询接口（试过 /api/v0/users/balance 等均 404），
+    # 所以直连模式下只能靠 API Key；两样都没有就如实说「去官网看」，不伪造 0。
+    key = (p.get("_key") or
+           str((load_platform_creds().get("deepseek") or {}).get("api_key") or "")).strip()
+    if not key:
+        return {"status": "unavailable", "type": "money",
+                "detail": "未提供 DeepSeek API Key，余额请在控制台查看"}
     root = re.match(r"^(https?://[^/]+)", p["base_url"] or "")
     host = root.group(1) if root else "https://api.deepseek.com"
     url = host + "/user/balance"
-    code, body = http_get(url, {"Authorization": "Bearer " + p["_key"],
+    code, body = http_get(url, {"Authorization": "Bearer " + key,
                                 "Accept": "application/json"}, timeout)
     if code != 200:
         return {"status": "error", "http": code, "detail": body[:200]}
@@ -453,10 +539,15 @@ def balance_deepseek(p, timeout=12):
 
 
 def balance_moonshot(p, timeout=12):
+    key = (p.get("_key") or
+           str((load_platform_creds().get("kimi") or {}).get("api_key") or "")).strip()
+    if not key:
+        # 直连模式（没有 CC Switch 的 API Key）→ 用网页凭据读账户余额，效果一样
+        return kimi_balance_web(timeout)
     root = re.match(r"^(https?://[^/]+)", p["base_url"] or "")
     host = root.group(1) if root else "https://api.moonshot.cn"
     url = host + "/v1/users/me/balance"
-    code, body = http_get(url, {"Authorization": "Bearer " + p["_key"],
+    code, body = http_get(url, {"Authorization": "Bearer " + key,
                                 "Accept": "application/json"}, timeout)
     if code != 200:
         return {"status": "error", "http": code, "detail": body[:200]}
@@ -627,6 +718,26 @@ def price_lookup():
         return {}
 
 
+def _builtin_blended(provider):
+    """内置 PRICING 里该提供商「输入+输出」的均价（元 / 百万 tokens，按当前时段）。
+
+    ⚠ 与 CC Switch 价目表最大的区别：PRICING 本来就是人民币，拿来做估算**不能再乘汇率**。
+    直连模式（没有 CC Switch）没有别的报价来源，只能用它兜底。
+    """
+    pk = PLATFORM_KIND_OF.get(provider.get("kind"))
+    plat = next((p for p in PRICING if p["key"] == pk), None)
+    if not plat:
+        return 0.0
+    slot_key = slot_state(plat["slot"])[0]
+    want = [m for m in plat["models"] if m["id"] in (provider.get("models") or [])]
+    vals = []
+    for m in (want or plat["models"]):
+        pr = m.get("peak") if slot_key == "peak" else m.get("off")
+        if pr:
+            vals.append((float(pr.get("input") or 0) + float(pr.get("output") or 0)) / 2)
+    return (sum(vals) / len(vals)) if vals else 0.0
+
+
 def estimate_tokens(provider, prov_usage, price_map):
     """用近 N 天实际用量混合单价折算剩余金额≈可用 token（单位：人民币 / 百万 token）"""
     t = prov_usage.get("totals") or {}
@@ -637,11 +748,12 @@ def estimate_tokens(provider, prov_usage, price_map):
         source = "实际用量"
     else:  # 无本地记录：按配置模型的官方标价平均（CC Switch 表里存的是美元，折成人民币）
         rate = _usd_cny()
-        prices = [price_map[m] for m in provider["models"] if m in price_map]
+        prices = [price_map[m] for m in (provider.get("models") or []) if m in price_map]
         if prices:
             blended = sum((p["input"] + p["output"]) / 2 for p in prices) / len(prices) * rate
         else:
-            blended = rate
+            # 直连模式没有 CC Switch 价目表 → 退回内置 PRICING（人民币，不再乘汇率）
+            blended = _builtin_blended(provider) or rate
         source = "模型标价"
     return blended, source
 
@@ -677,12 +789,15 @@ PLATFORM_SPEC = {
         "label": "DeepSeek",
         "mode": "usage",          # usage = 有按模型/按天明细
         "fields": [{"key": "token", "label": "网页登录 Token",
-                    "hint": "platform.deepseek.com 控制台 F12 → Console 执行 JSON.parse(localStorage.userToken).value"}],
+                    "hint": "platform.deepseek.com 控制台 F12 → Console 执行 JSON.parse(localStorage.userToken).value"},
+                   {"key": "api_key", "label": "API Key（可选，用于查余额）", "optional": True,
+                    "hint": "sk-… 不填也能看用量；DeepSeek 控制台未开放余额接口，只有 API Key 能查余额"}],
         "howto": [
             "浏览器登录 platform.deepseek.com（注意：这不是 API Key，是网页登录凭据）",
             "按 F12 打开开发者工具，切到 Console 面板",
             "执行 JSON.parse(localStorage.userToken).value 并回车",
             "复制输出的整串字符，粘贴到上面",
+            "想让余额也显示出来，再填一个 API Key（平台「API 密钥」页可创建）；不填也能看用量，只是余额处会提示去控制台查看",
         ],
     },
     "kimi": {
@@ -882,17 +997,20 @@ def creds_meta(usage=None):
     """
     d = load_platform_creds()
     dead = {r.get("kind") for r in (usage or {}).values() if r.get("status") == "expired"}
+    alive = {r.get("kind") for r in (usage or {}).values()
+             if r.get("status") in ("ok", "empty")}
     out = {}
     for k, spec in PLATFORM_SPEC.items():
         c = d.get(k) or {}
         fields = {}
-        filled_all = True
+        # 「已配置」只看必填字段：像 DeepSeek 的 API Key 只是可选（用于查余额），
+        # 拿它参与判定会让一个凭据完全可用的账号永远显示「未配置」。
+        required = [f for f in spec["fields"] if not f.get("optional")]
+        filled_all = all(str(c.get(f["key"]) or "").strip() for f in required)
         for f in spec["fields"]:
             v = str(c.get(f["key"]) or "").strip()
             if v:
                 fields[f["key"]] = mask_key(v)
-            else:
-                filled_all = False
         out[k] = {"label": spec["label"], "mode": spec["mode"],
                   "configured": filled_all, "masked": fields}
         if any(str(c.get(f["key"]) or "").strip() for f in spec["fields"]):
@@ -900,6 +1018,14 @@ def creds_meta(usage=None):
             if k in dead:
                 exp = {"at": None, "days": -1, "level": "expired",
                        "source": "官网本次返回票据失效，需重新获取"}
+            elif (k in alive and exp.get("estimated")
+                  and exp.get("level") == "expired"):
+                # 经验有效期只是估算：估算到期、但官网这次调用是通的 → 以实测为准。
+                # 否则界面会一边显示「官网实扣」，一边警告「票据已失效 7 天」。
+                exp = {"at": None, "days": None, "level": "ok", "estimated": True,
+                       "note": "官网调用成功，票据仍有效",
+                       "source": "经验有效期（%d 天）已过，但官网本次调用成功；"
+                                 "以实测为准，建议仍尽快重新采集" % CRED_EST_DAYS.get(k, 7)}
             out[k]["expiry"] = exp
     return out
 
@@ -1090,6 +1216,14 @@ def _http_fail_msg(code, host=""):
     return "HTTP %s 响应无法解析" % code
 
 
+# DeepSeek 按月查询的原始响应缓存：历史月份不会变，长缓存；当月随时在变，短缓存。
+# 只缓存成功结果，失败的下轮自然重试。
+_DS_MONTH_CACHE = {}
+_DS_CACHE_LOCK = threading.Lock()
+_DS_TTL_PAST = 6 * 3600
+_DS_TTL_CUR = 60
+
+
 def pu_deepseek(cred, days):
     token = str((cred or {}).get("token") or "").strip()
     if not token:
@@ -1097,20 +1231,39 @@ def pu_deepseek(cred, days):
     hdr = {"Authorization": "Bearer " + token, "User-Agent": UA_BROWSER,
            "x-app-version": "1.0.0", "Accept": "application/json"}
     months, today = set(), datetime.date.today()
-    for i in range(days + 1):
+    # 只取窗口真正覆盖的账期：多算一天会有跨月时白跑一整个月 × 2 个接口
+    for i in range(max(1, days)):
         d = today - datetime.timedelta(days=i)
         months.add((d.year, d.month))
-    # 「全年」要跨 13 个月份 × 2 个接口，串行要近 20 秒 → 先并发取回原始响应，
-    # 再单线程按月归并，避免多个线程同时改写累加器。
+    # 「全年」要跨 13 个月份 × 2 个接口 = 26 次请求，串行要近 20 秒 → 并发取原始响应，
+    # 再单线程按月归并（不能多个线程同时改累加器）。
+    # ⚠ 但并发一高 DeepSeek 就回 429：实测 14 个并发月查询就把整家打成「限流」，
+    #   界面于是回落本地记录 —— 而本地是美元估算，会出现「全年合计比半年还小」的怪象。
+    #   所以：并发降到 3 + 单请求 429 退避重试 + 历史月份缓存（历史数据不会再变，
+    #   只有当月需要重新拉）。第二轮起 365 天只要 2 次请求。
     jobs = [(y, m, kind) for (y, m) in sorted(months) for kind in ("amount", "cost")]
 
     def fetch(job):
         y, m, kind = job
+        key = (y, m, kind)
+        ttl = _DS_TTL_CUR if (y, m) == (today.year, today.month) else _DS_TTL_PAST
+        with _DS_CACHE_LOCK:
+            hit = _DS_MONTH_CACHE.get(key)
+        if hit and time.time() - hit[0] < ttl:
+            return hit[1], hit[2]
         url = ("https://platform.deepseek.com/api/v0/usage/%s?month=%d&year=%d"
                % (kind, m, y))
-        return http_json(url, "GET", hdr, None, 20)
+        for attempt in range(3):
+            code, j = http_json(url, "GET", hdr, None, 20)
+            if code != 429:
+                break
+            time.sleep(1.2 * (attempt + 1))       # 429 退避后重试，别直接判死
+        if code == 200 and j is not None:         # 只缓存成功结果
+            with _DS_CACHE_LOCK:
+                _DS_MONTH_CACHE[key] = (time.time(), code, j)
+        return code, j
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
         fetched = list(ex.map(fetch, jobs))
 
     tok_acc, cost_acc, last_err, got_data = {}, {}, None, False
@@ -1142,8 +1295,7 @@ def pu_deepseek(cred, days):
 def _build_platform_shape(tok_acc, cost_acc, days):
     empty = {"requests": 0, "success": 0, "input": 0, "output": 0,
              "cache_read": 0, "cache_creation": 0, "cost": 0.0}
-    days_set = set((datetime.date.today() - datetime.timedelta(days=i)).isoformat()
-                   for i in range(days - 1, -1, -1))
+    days_set = _days_set(days)
     models, by_day, model_days = {}, {}, {}
     for key in set(tok_acc) | set(cost_acc):
         model, date = key
@@ -1212,6 +1364,8 @@ def _build_platform_shape(tok_acc, cost_acc, days):
 KIMI_API = "https://platform.kimi.com/api"
 KIMI_FEE_UNIT = 100000.0
 KIMI_REFRESH_AHEAD = 300      # access token 剩余寿命低于该秒数就提前续期
+# 刷新必须串行（见 pu_kimi 里的说明）：rtoken 是一次性轮换的
+_KIMI_REFRESH_LOCK = threading.Lock()
 
 
 def _kimi_headers(token=None, ms_auth=None):
@@ -1255,6 +1409,51 @@ def kimi_refresh(cred):
     return at, (str(d.get("refresh_token") or "").strip() or rtok)
 
 
+def kimi_balance_web(timeout=15):
+    """用网页凭据读 Kimi 账户余额（organizationAccountInfo），不需要 API Key。
+
+    直连模式（没有 CC Switch）下余额的唯一来源。金额单位 1e-5 元：
+    cur=当前余额、voucher_cur=其中赠送余额、use=累计消费、acc=累计充值。
+    ⚠ 续期必须和 pu_kimi 共用同一把锁：rtoken 是一次性轮换的，并发刷新会把彼此作废。
+    """
+    cred = dict(load_platform_creds().get("kimi") or {})
+    at = str(cred.get("token") or "").strip()
+    rtok = str(cred.get("refresh_token") or "").strip()
+    if rtok and (not at or _jwt_exp(at) - time.time() < KIMI_REFRESH_AHEAD):
+        with _KIMI_REFRESH_LOCK:
+            cur = load_platform_creds().get("kimi") or {}
+            cur_at = str(cur.get("token") or "").strip()
+            if cur_at and _jwt_exp(cur_at) - time.time() >= KIMI_REFRESH_AHEAD:
+                at = cur_at
+            else:
+                got = kimi_refresh(dict(cur or cred))
+                if got:
+                    at, new_rt = got
+                    update_platform_creds("kimi", {"token": at, "refresh_token": new_rt})
+    if not at:
+        return {"status": "unavailable", "type": "money",
+                "detail": "未配置 Kimi 网页凭据，余额请在控制台查看"}
+    org = str((load_platform_creds().get("kimi") or {}).get("organization") or "").strip()
+    _code, j = _kimi_get("organizationAccountInfo", {"oid": org} if org else None, token=at)
+    d = (j or {}).get("data") if isinstance(j, dict) else None
+    if not isinstance(d, dict):
+        return {"status": "unavailable", "type": "money",
+                "detail": "Kimi 余额接口返回异常，请到控制台查看"}
+
+    def n(k):
+        try:
+            return round(float(d.get(k) or 0) / KIMI_FEE_UNIT, 2)
+        except Exception:
+            return 0.0
+
+    tot, gift = n("cur"), n("voucher_cur")
+    return {"status": "ok", "type": "money", "currency": "CNY",
+            "items": [{"currency": "CNY", "total": tot, "granted": gift,
+                       "topped_up": round(max(tot - gift, 0), 2)}],
+            "available": tot > 0, "checked_at": now_iso(),
+            "source": "官网账户接口", "spent_yuan": n("use") or None}
+
+
 def pu_kimi(cred, days):
     c = cred or {}
     at = str(c.get("token") or "").strip()
@@ -1264,14 +1463,26 @@ def pu_kimi(cred, days):
         return {"status": "nokey", "detail": "未配置 Kimi 网页凭据（rtoken）"}
 
     # 1) access token 缺失或即将过期 → 用 rtoken 续期，并把轮换后的凭据写回本机
+    #    ⭐ 必须串行：Kimi 每刷新一次就轮换 rtoken。并发刷新（60s 轮询 + 手动刷新 +
+    #    「测试连接」）会各自拿同一个旧 rtoken 去换，后成功的那个会把前一个写进
+    #    文件的新 rtoken 覆盖掉，最终可能落一个已被服务端作废的凭据。
     refreshed = False
     if rtok and (not at or _jwt_exp(at) - time.time() < KIMI_REFRESH_AHEAD):
-        got = kimi_refresh(c)
-        if got:
-            at, new_rt = got
-            c["token"], c["refresh_token"] = at, new_rt
-            update_platform_creds("kimi", {"token": at, "refresh_token": new_rt})
-            refreshed = True
+        with _KIMI_REFRESH_LOCK:
+            cur = load_platform_creds().get("kimi") or {}
+            cur_at = str(cur.get("token") or "").strip()
+            if cur_at and _jwt_exp(cur_at) - time.time() >= KIMI_REFRESH_AHEAD:
+                # 别人刚刷过，直接复用，别再拿旧 rtoken 换一次
+                at = cur_at
+                rtok = str(cur.get("refresh_token") or rtok).strip()
+                org = str(cur.get("organization") or org).strip()
+            else:
+                got = kimi_refresh(dict(cur or c))
+                if got:
+                    at, new_rt = got
+                    c["token"], c["refresh_token"] = at, new_rt
+                    update_platform_creds("kimi", {"token": at, "refresh_token": new_rt})
+                    refreshed = True
     if not at:
         return {"status": "expired",
                 "detail": "Kimi rtoken 已失效，请在「平台凭据」里重新采集"}
@@ -1310,8 +1521,7 @@ def pu_kimi(cred, days):
 
     empty = {"requests": 0, "success": 0, "input": 0, "output": 0,
              "cache_read": 0, "cache_creation": 0, "cost": 0.0}
-    days_set = set((datetime.date.today() - datetime.timedelta(days=i)).isoformat()
-                   for i in range(days - 1, -1, -1))
+    days_set = _days_set(days)
     models, by_day, model_days = {}, {}, {}
     for r in rows:
         if not isinstance(r, dict):
@@ -1441,6 +1651,10 @@ def zhipu_account(cred, timeout=20):
             "today_spend": _num(d.get("todaySpendAmount"))}
 
 
+ZHIPU_PAGE_SIZE = 500
+ZHIPU_MAX_PAGES = 40        # 兜底：单月最多取 2 万行，防止接口 total 异常时死循环
+
+
 def zhipu_bills(cred, month, timeout=25):
     """某账期的全部计费记录 → (rows, err)。err 为 None 表示成功。
 
@@ -1448,38 +1662,51 @@ def zhipu_bills(cred, month, timeout=25):
     实测常见「HTTP 200 + 空 body」，json.loads 直接得到 None。若不单独识别，
     界面只会显示含糊的「HTTP 200 响应无法解析」，用户根本不知道该重新登录，
     所以这里把 200/401/403 的不可解析响应统一归到「票据失效」。
+
+    ⭐ 必须翻页：接口按 pageSize 截断，一个月超过一页时只取第一页会**静默少算金额**
+    （以前写死 pageSize=1000 且只取第 1 页，用量大的月份就会少账）。后面几页失败时
+    保留已取到的行，总比把整月判成失败好。
     """
-    url = (ZHIPU_API + "/finance/expenseBill/expenseBillList?billingMonth=%s"
-           "&pageNum=1&pageSize=1000" % month)
-    code, j = http_json(url, "GET", _zh_hdr(cred), None, timeout)
-    if not isinstance(j, dict):
-        if code == 0:
-            return [], "网络请求失败，无法连接 bigmodel.cn"
-        if code in (200, 401, 403):
-            return [], "__EXPIRED__HTTP %s 但响应为空，票据已失效或被顶下线" % code
-        return [], "HTTP %s 响应无法解析" % code
-    rows = j.get("rows")
-    if isinstance(rows, list):
-        return rows, None
-    msg = str(j.get("msg") or j.get("message") or "").strip()
-    low = msg.lower()
-    # 两种失效形态都要认：①HTTP 层 401/403；②HTTP 200 但 body 里是业务错误码 401
-    # （实测「令牌已过期或验证不正确」走的是这种，少了这句就会被当成普通查询失败）
-    if (code in (401, 403) or _num(j.get("code")) in (401, 403)
-            or "authorization" in low or "unauthorized" in low
-            or "令牌" in msg or "过期" in msg or "身份" in msg or "登录" in msg):
-        return [], "__EXPIRED__" + (msg or ("HTTP %s" % code))
-    return [], msg or ("HTTP %s" % code)
+    out, page = [], 1
+    while page <= ZHIPU_MAX_PAGES:
+        url = (ZHIPU_API + "/finance/expenseBill/expenseBillList?billingMonth=%s"
+               "&pageNum=%d&pageSize=%d" % (month, page, ZHIPU_PAGE_SIZE))
+        code, j = http_json(url, "GET", _zh_hdr(cred), None, timeout)
+        if not isinstance(j, dict):
+            if page > 1:
+                break
+            if code == 0:
+                return [], "网络请求失败，无法连接 bigmodel.cn"
+            if code in (200, 401, 403):
+                return [], "__EXPIRED__HTTP %s 但响应为空，票据已失效或被顶下线" % code
+            return [], "HTTP %s 响应无法解析" % code
+        rows = j.get("rows")
+        if not isinstance(rows, list):
+            if page > 1:
+                break
+            msg = str(j.get("msg") or j.get("message") or "").strip()
+            low = msg.lower()
+            # 两种失效形态都要认：①HTTP 层 401/403；②HTTP 200 但 body 里是业务错误码 401
+            # （实测「令牌已过期或验证不正确」走的是这种，少了这句就会被当成普通查询失败）
+            if (code in (401, 403) or _num(j.get("code")) in (401, 403)
+                    or "authorization" in low or "unauthorized" in low
+                    or "令牌" in msg or "过期" in msg or "身份" in msg or "登录" in msg):
+                return [], "__EXPIRED__" + (msg or ("HTTP %s" % code))
+            return [], msg or ("HTTP %s" % code)
+        out.extend(rows)
+        total = int(_num(j.get("total")))
+        if not rows or len(rows) < ZHIPU_PAGE_SIZE or (total and len(out) >= total):
+            break
+        page += 1
+    return out, None
 
 
 def pu_zhipu(cred, days):
     c = cred or {}
     if not str(c.get("jwt_token") or "").strip():
         return {"status": "nokey", "detail": "未配置登录票据 JWT"}
-    today = datetime.date.today()
-    days_set = set((today - datetime.timedelta(days=i)).isoformat() for i in range(days))
-    months = sorted({(today - datetime.timedelta(days=i)).strftime("%Y-%m")
-                     for i in range(days + 1)})
+    days_set = _days_set(days)
+    months = _months_of(days)
     tok_acc, cost_acc = {}, {}
     rows_n, list_price, last_err, got = 0, 0.0, None, False
     pack_seen, last_usage = {}, None
@@ -1625,13 +1852,15 @@ def platform_usage_all(provs, days, force=False):
         t.start()
         threads.append(t)
     for t in threads:
-        t.join(timeout=25)
+        # 「全年」首次冷启动要跨 13 个月 × 2 个接口（还带 429 退避），实测最长 ~26s；
+        # 给到 40s，第二次起有按月缓存只要 ~5s。
+        t.join(timeout=40)
     ordered = {}
     for pid, meta in targets.items():          # 按 CC Switch 中的顺序输出；未取到的给占位
-        # 线程没在 25s 内返回 = 官网接口超时。别写成「未配置凭据」——
+        # 线程没在 40s 内返回 = 官网接口超时。别写成「未配置凭据」——
         # 那会让界面/测试以为凭据没填，实际只是这次网络慢，下一轮就正常。
         ordered[pid] = results.get(pid) or {
-            "status": "error", "detail": "官网接口响应超时（>25 秒），稍后自动重试",
+            "status": "error", "detail": "官网接口响应超时（>40 秒），稍后自动重试",
             "provider_id": meta["provider_id"],
             "provider_name": meta["provider_name"],
             "label": PLATFORM_SPEC[meta["kind"]]["label"],
@@ -1641,6 +1870,32 @@ def platform_usage_all(provs, days, force=False):
         PLATFORM_CACHE["data"] = ordered
         PLATFORM_CACHE["days"] = days
     return ordered
+
+
+def _observed_from_platform_cache(days):
+    """没有本地库时，用「本轮官网采集结果」里的模型名喂给定价面板。
+
+    只读 PLATFORM_CACHE、不发新请求：官网接口本来就返回逐模型明细，
+    所以直连模式下也能让「新出现的模型」出现在比价表里（查不到价则标「待补价」）。
+    缓存还没建立就返回 {}，下一轮轮询自然补上。
+    """
+    with PLATFORM_LOCK:
+        if PLATFORM_CACHE.get("days") != days:
+            return {}
+        data = PLATFORM_CACHE.get("data") or {}
+    out = {}
+    for r in data.values():
+        k = r.get("kind")
+        if not k:
+            continue
+        for m in (r.get("models") or []):
+            mn = str(m.get("model") or "").strip()
+            if not mn:
+                continue
+            lst = out.setdefault(k, [])
+            if mn not in lst:
+                lst.append(mn)
+    return out
 
 
 # ---------------- 分时段定价 ----------------
@@ -1961,6 +2216,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json({"ok": True,
                                    "server_time": now_iso(),
                                    "db_path": DB_PATH,
+                                   # builtin = 没走 CC Switch，按内置三家目录 + 官网凭据工作
+                                   "source_mode": PROVIDER_SOURCE["mode"],
+                                   "source_note": PROVIDER_SOURCE["note"],
                                    "providers": out_providers,
                                    "usage_totals": usage.get("totals"),
                                    "total_summary": total,
@@ -1975,6 +2233,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 # 「实时更新最新模型」：先把本地在用的模型捞出来，官价表没收录的自动补行
                 provs, err = load_providers()
                 observed = models_in_use(provs, pdays) if not err else None
+                if not observed:
+                    # 直连模式（没有 CC Switch）拿不到本地库，改从官网采集结果里取模型名
+                    observed = _observed_from_platform_cache(pdays)
                 return self._json({"ok": True, **pricing_snapshot(observed)})
             if path == "/api/platform":
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -2018,44 +2279,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
             payload = json.loads(raw.decode("utf-8") or "{}")
         except Exception:
             payload = {}
+        # 请求体可能是数组 / 字符串 / 空：后面全按 dict 取字段，这里先归一，
+        # 否则 payload.get 会抛 AttributeError，连接直接断掉（返回不了任何 JSON）
+        if not isinstance(payload, dict):
+            payload = {}
         if path == "/api/config":
-            for k in ("refresh_seconds", "low_balance_cny", "days_default", "usd_cny"):
-                if k in payload:
-                    try:
-                        config[k] = type(DEFAULT_CONFIG[k])(payload[k])
-                    except Exception:
-                        pass
-            if isinstance(payload.get("recharge_urls"), dict):
-                cleaned = {str(k): str(v) for k, v in payload["recharge_urls"].items() if str(v).startswith(("http://", "https://")) or not v}
-                config["recharge_urls"] = cleaned
-            if isinstance(payload.get("low_balance_by_provider"), dict):
-                lbp = {}
-                for k, v in payload["low_balance_by_provider"].items():
-                    name = str(k).strip()
-                    if not name:
-                        continue
-                    try:
-                        amt = float(v)
-                    except Exception:
-                        continue          # 留空 = 用全局默认，不写入
-                    if amt > 0:
-                        lbp[name] = round(amt, 2)
-                config["low_balance_by_provider"] = lbp
-            if isinstance(payload.get("price_mix"), dict):
-                pm = {}
-                for k in ("input", "cache", "output"):
-                    try:
-                        v = float(payload["price_mix"].get(k))
-                    except Exception:
-                        continue
-                    if v >= 0:
-                        pm[k] = round(v, 4)
-                if pm:
-                    mix = dict(DEFAULT_CONFIG["price_mix"])
-                    mix.update(pm)
-                    if sum(mix.values()) > 0:
-                        config["price_mix"] = mix
-            save_config()
+            if payload:                       # 空 body / 坏 JSON 别白写一次配置文件
+                for k in ("refresh_seconds", "low_balance_cny", "days_default", "usd_cny"):
+                    if k in payload:
+                        try:
+                            config[k] = type(DEFAULT_CONFIG[k])(payload[k])
+                        except Exception:
+                            pass
+                if isinstance(payload.get("recharge_urls"), dict):
+                    cleaned = {str(k): str(v) for k, v in payload["recharge_urls"].items()
+                               if str(v).startswith(("http://", "https://")) or not v}
+                    config["recharge_urls"] = cleaned
+                if isinstance(payload.get("low_balance_by_provider"), dict):
+                    lbp = {}
+                    for k, v in payload["low_balance_by_provider"].items():
+                        name = str(k).strip()
+                        if not name:
+                            continue
+                        try:
+                            amt = float(v)
+                        except Exception:
+                            continue          # 留空 = 用全局默认，不写入
+                        if amt > 0:
+                            lbp[name] = round(amt, 2)
+                    config["low_balance_by_provider"] = lbp
+                if isinstance(payload.get("price_mix"), dict):
+                    pm = {}
+                    for k in ("input", "cache", "output"):
+                        try:
+                            v = float(payload["price_mix"].get(k))
+                        except Exception:
+                            continue
+                        if v >= 0:
+                            pm[k] = round(v, 4)
+                    if pm:
+                        mix = dict(DEFAULT_CONFIG["price_mix"])
+                        mix.update(pm)
+                        if sum(mix.values()) > 0:
+                            config["price_mix"] = mix
+                save_config()
             return self._json({"ok": True})
         if path == "/api/platform_creds":
             kind = str(payload.get("kind") or "")
@@ -2086,6 +2353,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # 票据真的换新了才刷新采集时间（改充值地址之类的空保存不算）
             if {k: str(cur.get(k) or "") for k in kek} != before:
                 cur["captured_at"] = now_iso()
+            # 字段全被清空时别留一个只剩 captured_at 的空壳
+            if cur and not any(str(cur.get(k) or "").strip() for k in kek):
+                cur = {}
             if cur:
                 creds[kind] = cur
             else:
@@ -2095,6 +2365,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with PLATFORM_LOCK:
                 PLATFORM_CACHE["t"] = 0
                 PLATFORM_CACHE["data"] = None
+                # 换了票据就把该家的限流冷却也解除：用户刚补完凭据，
+                # 不该还看着「限流中，N 秒后重试」
+                RL_UNTIL.pop(kind, None)
             return self._json({"ok": True, "creds": creds_meta()})
         if path == "/api/platform_test":
             kind = str(payload.get("kind") or "")

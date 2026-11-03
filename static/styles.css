@@ -870,6 +870,12 @@ td.src-cell { color: var(--ink-3); font-size: 12px; }
 .pf-fields { display: grid; gap: 11px; }
 .pf-field { display: grid; gap: 5px; }
 .pf-label { font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
+/* 「可选」标记：这类字段不参与「已配置」判定，填了能增强功能，不填也不影响用量 */
+.pf-opt {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; color: var(--ink-3);
+  background: var(--bg-2); border: 1px solid var(--line);
+}
 .pf-field input {
   width: 100%; font: 12.5px/1.4 var(--mono); padding: 9px 11px; border-radius: 9px;
   border: 1px solid var(--line); background: var(--surface-solid); color: var(--ink);

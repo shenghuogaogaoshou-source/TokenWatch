@@ -236,10 +236,17 @@ function unifiedTotals() {
   return t;
 }
 
+/* 直连模式：没装 CC Switch / 库里没有提供商，按内置三家目录 + 官网凭据工作。
+   此时「回落本地记录」这个说法不成立（根本没有本地记录），文案要换掉。 */
+function builtinMode() {
+  return !!(state.dataMain && state.dataMain.source_mode === "builtin");
+}
+
 /* 数据来源状态条（统一视图，无切换开关） */
 function syncSrcBar() {
   const badge = $("#srcBadge"), hint = $("#srcHint"), cred = $("#srcCredState");
   const plat = state.platform;
+  const builtin = builtinMode();
   const c = (plat && plat.creds) || {};
   const kinds = Object.keys(c);
   const okN = kinds.filter((k) => c[k] && c[k].configured).length;
@@ -254,7 +261,8 @@ function syncSrcBar() {
   if (badge) {
     badge.className = "src-badge" + (liveN ? " on" : "");
     badge.innerHTML = `<i class="src-dot"></i>` +
-      (liveN ? "官网实时 · " + liveN + " 家" : "本地记录");
+      (liveN ? "官网实时 · " + liveN + " 家"
+             : (builtin ? "未接通官网" : "本地记录"));
   }
   if (hint) {
     hint.textContent = !plat
@@ -263,9 +271,13 @@ function syncSrcBar() {
         ? `已接通 ${liveN}/${nProv} 家官网接口；其中 ${emptyN} 家在本区间内没有用量，按 0 计`
         : liveN
           ? (liveN < nProv
-              ? "已接通 " + liveN + "/" + nProv + " 家官网接口，其余自动回落本地记录"
+              ? "已接通 " + liveN + "/" + nProv + " 家官网接口，" +
+                (builtin ? "其余尚未配置凭据" : "其余自动回落本地记录")
               : "全部提供商均已接通官网接口，按账户实际扣费口径显示")
-          : "官网用量暂不可得，当前以 CC Switch 本地记录呈现";
+          : (builtin
+              ? "官网直连模式（" + ((state.dataMain && state.dataMain.source_note) || "未使用 CC Switch") +
+                "）· 点「平台凭据」填入各家登录票据即可出数"
+              : "官网用量暂不可得，当前以 CC Switch 本地记录呈现");
   }
   if (!cred) return;
   if (!kinds.length) { cred.textContent = ""; cred.className = "src-credstate"; return; }
@@ -378,7 +390,8 @@ function renderExpiryStrip() {
   host.hidden = false;
   host.className = "exp-strip" + (urgent ? " urgent" : "");
   host.innerHTML = `<span class="exp-head">${dead
-    ? `⚠ ${dead} 家票据已失效，官网数据已回落本地记录，请重新获取凭据`
+    ? `⚠ ${dead} 家票据已失效，` +
+      (builtinMode() ? "官网数据取不到，请重新获取凭据" : "官网数据已回落本地记录，请重新获取凭据")
     : urgent
       ? "⚠ 有票据即将过期，建议优先使用以下提供商，并尽快更新凭据"
       : "ℹ 票据期限提醒：以下提供商的登录票据将在 7 天内到期"}</span>` +
@@ -470,7 +483,10 @@ function renderTape() {
 
   const cur = provs.find((p) => p.is_current) || provs[0];
   $("#tapeActiveV").textContent = provs.length ? "正常 · " + provs.length + " 家" : "未接入";
-  $("#tapeActiveF").innerHTML = "数据目录：<span id='tapeDb'>" + esc(shortDb()) + "</span> · " +
+  $("#tapeActiveF").innerHTML =
+    (builtinMode()
+      ? "数据来源：<b>官网直连</b>（未使用 CC Switch）"
+      : "数据目录：<span id='tapeDb'>" + esc(shortDb()) + "</span>") + " · " +
     (cur ? "当前：<b>" + esc(cur.name) + "</b>" : "");
   $("#fxRate").textContent = fx;
 }
@@ -631,7 +647,7 @@ function expiryText(ex) {
   if (!ex) return null;
   if (ex.days == null) {
     return {
-      txt: ex.long_lived ? "长期有效" : "有效期未知",
+      txt: ex.note || (ex.long_lived ? "长期有效" : "有效期未知"),
       day: null, cls: "dim", tip: ex.source, est: false,
     };
   }
@@ -848,6 +864,11 @@ function buildBalance(p, b) {
     } else if (b.type === "quota_percent") {
       wrap.appendChild(buildPlan(b, p));
     }
+  } else if (b.status === "unavailable") {
+    /* 直连模式的正常状态（没给 API Key，或官网没开放余额接口）——别摆红框吓人 */
+    const ln = el("div", "est-line");
+    ln.innerHTML = `可用余额 <b>—</b> <span class="src">${esc(b.detail || "请在官网查看")}</span>`;
+    wrap.appendChild(ln);
   } else {
     const box = el("div", "errbox");
     const site = p.website_url || "#";
@@ -950,8 +971,12 @@ function renderDetail() {
     emptyText: unifiedEmptyText(),
     noteText: allProvs.length
       ? `范围：${rangeText()} · 逐家判定：${nPlat} 家取官网实际扣费口径` +
-        (nExp ? `，${nExp} 家官网凭据已失效、回落本机记录（需重新获取票据）` : "") +
-        (nLocal ? `，${nLocal} 家官网未接通、回落本机 CC Switch 记录（估算口径）` : "") +
+        (nExp ? (builtinMode()
+          ? `，${nExp} 家官网凭据已失效（需重新获取票据）`
+          : `，${nExp} 家官网凭据已失效、回落本机记录（需重新获取票据）`) : "") +
+        (nLocal ? (builtinMode()
+          ? `，${nLocal} 家尚未配置官网凭据（本区间按 0 计）`
+          : `，${nLocal} 家官网未接通、回落本机 CC Switch 记录（估算口径）`) : "") +
         (anyCostOnly ? "；带「金额口径」的平台官网只开放消费金额，不提供 token / 请求数" : "") +
         (anyNoReq ? "；带「无请求数」的平台官网账单不提供请求数，仅有 token 与金额" : "") +
         `；金额统一为人民币口径，CC Switch 本地记录原为美元、已按 ¥${fxr}/USD 折算` +
@@ -1336,15 +1361,23 @@ function renderApiTable(provs, opts) {
     tot.req += r.req; tot.inp += r.inp; tot.out += r.out; tot.cache += r.cache; tot.cost += r.cost;
     const pct = (r.cost / sumCost) * 100;
     const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
-    const localTitle = (r.why === "empty"
-      ? "该家官网接口已接通，但本统计区间内官网没有用量记录，此处回落本机 CC Switch 记录（通常为 0）"
-      : r.why === "expired"
-        ? "该家官网凭据已失效（需要重新获取票据），当前回落本机 CC Switch 记录（估算口径）"
-        : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）") +
-      "；本地记录原为美元，已按 ¥" + fxr + "/USD 折算";
+    const bm = builtinMode();
+    const localTitle = bm
+      ? (r.why === "empty"
+          ? "官网直连模式：该家官网接口已接通，但本统计区间内没有用量记录"
+          : r.why === "expired"
+            ? "官网直连模式：该家凭据已失效（需要重新获取票据），本区间按 0 计"
+            : "官网直连模式：尚未配置该家官网凭据，本区间按 0 计")
+      : (r.why === "empty"
+          ? "该家官网接口已接通，但本统计区间内官网没有用量记录，此处回落本机 CC Switch 记录（通常为 0）"
+          : r.why === "expired"
+            ? "该家官网凭据已失效（需要重新获取票据），当前回落本机 CC Switch 记录（估算口径）"
+            : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）") +
+        "；本地记录原为美元，已按 ¥" + fxr + "/USD 折算";
     const srcTag = r.src === "platform"
       ? `<span class="src-tag plat" title="取自该平台官网接口，账户实际扣费口径">官网实扣</span>`
-      : `<span class="src-tag local" title="${localTitle}">本地记录</span>`;
+      : `<span class="src-tag local" title="${localTitle}">${
+          r.why === "empty" ? "区间无用量" : (bm ? "未接通" : "本地记录")}</span>`;
     const extra = (r.costOnly
         ? `<span class="costonly-tag" title="该平台官网只提供金额，无 token / 请求数口径">金额口径</span>` : "")
       + (r.noReq && !r.costOnly
@@ -1462,9 +1495,15 @@ function openPlatformCreds() {
 }
 function closePlatformCreds() { $("#platformModal").hidden = true; }
 
+/* 只回传「用户这次真的填了」的字段。
+   ⚠ 服务端把空串当成「清除该项」，若把空输入框一并提交，
+   只改一个字段就会把同平台的其它凭据（如 organization / project）清掉。 */
 function collectFields(block) {
   const out = {};
-  block.querySelectorAll("input[data-key]").forEach((i) => { out[i.dataset.key] = i.value.trim(); });
+  block.querySelectorAll("input[data-key]").forEach((i) => {
+    const v = i.value.trim();
+    if (v) out[i.dataset.key] = v;
+  });
   return out;
 }
 
@@ -1512,7 +1551,8 @@ function buildPlatformForm() {
     for (const f of (s.fields || [])) {
       const masked = cm.masked ? cm.masked[f.key] : "";
       const row = el("div", "pf-field");
-      row.innerHTML = `<label class="pf-label" for="pf-${kind}-${f.key}">${esc(f.label)}</label>
+      row.innerHTML = `<label class="pf-label" for="pf-${kind}-${f.key}">${esc(f.label)}${
+          f.optional ? '<span class="pf-opt">可选</span>' : ""}</label>
         <input id="pf-${kind}-${f.key}" type="text" data-key="${esc(f.key)}" autocomplete="off"
           spellcheck="false" placeholder="${esc(f.hint || "")}" value="">
         <div class="pf-meta">${masked ? `当前：<code>${esc(masked)}</code> · ` : ""}留空则不修改${cm.configured ? "；三项全空可清除" : ""}</div>`;
@@ -1557,11 +1597,9 @@ function focusPlatform(kind) {
 }
 
 async function testPlatform(kind, block, resEl, btn) {
+  /* 没填新值就测「已保存的那份」——服务端会用已存凭据兜底；
+     两边都空时它会回「未配置…」，比在弹窗里直接拒绝更有信息量 */
   const fields = collectFields(block);
-  if (!Object.values(fields).some((v) => v)) {
-    toast("请先填写凭据再测试", true);
-    return;
-  }
   btn.classList.add("loading");
   resEl.className = "pf-res";
   resEl.textContent = "测试中…";
@@ -1588,6 +1626,10 @@ async function testPlatform(kind, block, resEl, btn) {
 
 async function savePlatform(kind, block, btn) {
   const fields = collectFields(block);
+  if (!Object.keys(fields).length) {
+    toast("没有需要保存的改动（留空即保持原值）");
+    return;
+  }
   btn.classList.add("loading");
   try {
     const j = await postJSON("/api/platform_creds", { kind, fields });

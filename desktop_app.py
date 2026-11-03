@@ -66,6 +66,18 @@ def port_in_use(port):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def is_tokenwatch(port):
+    """端口被占用 ≠ 占用者是本程序：先问一句 /api/config，别把别人的服务当自己开窗口。"""
+    import json
+    import urllib.request
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open("http://127.0.0.1:%d/api/config" % port, timeout=2) as r:
+            return bool(json.loads(r.read().decode("utf-8")).get("ok"))
+    except Exception:
+        return False
+
+
 def open_app_window(url, edge, profile_dir):
     """启动独立 Edge 应用窗口（专属 user-data-dir，关闭窗口可感知）"""
     cmd = [edge, "--app=" + url,
@@ -87,7 +99,7 @@ def main():
     edge = find_edge()
 
     # ---- 已有一个实例在运行？直接开窗口指向它 ----
-    if port_in_use(default_port):
+    if port_in_use(default_port) and is_tokenwatch(default_port):
         url = "http://127.0.0.1:%d/" % default_port
         logging.info("instance already running, opening window at %s", url)
         if edge:

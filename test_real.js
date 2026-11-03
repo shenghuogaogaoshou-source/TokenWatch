@@ -105,10 +105,25 @@ const OUT = [];
     add('DeepSeek 卡片走官网口径',
         cards.some((c) => /DeepSeek/.test(c.name) && /官网实时/.test(c.stripSrc)), '-');
   }
-  add('Kimi 卡片走官网口径', cards.some((c) => /Kimi/.test(c.name) && /官网实时/.test(c.stripSrc)), '-');
-  add('Kimi 卡片标注仅金额', cards.some((c) => /Kimi/.test(c.name) && /仅提供金额/.test(c.stripSrc)), '-');
-  add('Kimi 用量条收成 3 格', cards.some((c) => /Kimi/.test(c.name) && (c.cols.match(/px/g) || []).length === 3),
-      cards.map((c) => c.name + ':' + (c.cols.match(/px/g) || []).length).join(' '));
+  /* Kimi 在统计区间内可能一笔都没有（例如每月 1 日刚过、看的是「本月」）。
+     这时官网返回 empty，卡片如实写「官网本区间无用量 · 按 0 计」，
+     那几条「走官网口径 / 仅金额 / 3 格」的断言无从验证 —— 跳过，别把数据空窗当回归。 */
+  const krec = recOf('kimi');        // 平台侧的 kind 是 kimi（不是 CC Switch 的 moonshot）
+  /* ⚠ 判定要同时看接口和卡片：本脚本按 days=30 取平台状态，而页面用的是「本月」
+     这类区间（月末/月初两者可能一家有一个没有），只信接口会误判。 */
+  const kEmpty = krec.status === 'empty' ||
+    cards.some((c) => /Kimi/.test(c.name) && /无用量|按 0 计/.test(c.stripSrc));
+  if (kEmpty) {
+    skip('Kimi 官网口径断言（本区间内没有用量，status=empty）');
+    add('Kimi 卡片标注本区间无用量并计 0',
+        cards.some((c) => /Kimi/.test(c.name) && /无用量|按 0 计/.test(c.stripSrc)),
+        cards.filter((c) => /Kimi/.test(c.name)).map((c) => c.stripSrc).join(' | ') || '-');
+  } else {
+    add('Kimi 卡片走官网口径', cards.some((c) => /Kimi/.test(c.name) && /官网实时/.test(c.stripSrc)), '-');
+    add('Kimi 卡片标注仅金额', cards.some((c) => /Kimi/.test(c.name) && /仅提供金额/.test(c.stripSrc)), '-');
+    add('Kimi 用量条收成 3 格', cards.some((c) => /Kimi/.test(c.name) && (c.cols.match(/px/g) || []).length === 3),
+        cards.map((c) => c.name + ':' + (c.cols.match(/px/g) || []).length).join(' '));
+  }
   add('官网卡片披露人民币原值', /官网实扣 ¥|官网计价 ¥/.test(cards.map((c) => c.stripSrc).join(' ')), '-');
   /* —— 币种：全站唯一口径是人民币，任何位置都不该再出现 $ —— */
   const moneyTexts = [
@@ -124,7 +139,11 @@ const OUT = [];
   add('明细表消耗列以 ¥ 开头（或 —）',
       rows.length > 0 && rows.every((r) => /^¥/.test(r.cells[6] || '') || (r.cells[6] || '') === '—'),
       rows.map((r) => r.cells[6]).join(' / '));
-  add('模型表出现「金额口径」标记', rows.some((r) => r.tag === '金额口径'), '-');
+  if (kEmpty) {
+    skip('明细表「金额口径」标记（Kimi 本区间无用量，该行按 0 计）');
+  } else {
+    add('模型表出现「金额口径」标记', rows.some((r) => r.tag === '金额口径'), '-');
+  }
   add('标记行的 token 列显示 — 而非 0',
       rows.filter((r) => r.tag === '金额口径').every((r) => r.cells[2] === '—'), '-');
   /* —— 智谱 GLM：官网费用账单口径（有 token、无请求数） ——
@@ -165,11 +184,13 @@ const OUT = [];
   const packShown = bal.some((b) => /智谱|GLM/.test(b.name) && /资源包余量/.test(b.text));
   add('智谱资源包余量：界面与接口一致（有剩余才显示）', packShown === packLeft,
       '接口 remaining>0? ' + packLeft + ' · 界面显示? ' + packShown);
-  /* 状态条的覆盖家数应当等于「真正走了官网」的卡片数（凭据失效的那家不算） */
+  /* 状态条的覆盖家数 = 「真正走了官网」+「官网接通但本区间无用量」两类之和 */
   const nLive = cards.filter((c) => /官网实时/.test(c.stripSrc)).length;
-  add('状态条覆盖家数 == 走官网的卡片数',
-      nLive === 0 ? /本地记录/.test(badge)
-                  : new RegExp('官网实时 · ' + nLive + ' 家').test(badge), badge);
+  const nIdle = cards.filter((c) => /本区间无用量|按 0 计/.test(c.stripSrc)).length;
+  const nCovered = nLive + nIdle;
+  add('状态条覆盖家数 == 接通官网的家数',
+      nCovered === 0 ? /本地记录|未接通官网/.test(badge)
+                     : new RegExp('官网实时 · ' + nCovered + ' 家').test(badge), badge);
   /* —— 交付后优化：票据期限标注 —— */
   const expLines = await page.$$eval('.est-line.exp',
     (ns) => ns.map((n) => n.textContent.replace(/\s+/g, ' ').trim()));
@@ -186,7 +207,11 @@ const OUT = [];
       (/剩 \d+ 天|已过期|已失效/.test(stripInfo.text) && /DeepSeek|Kimi|智谱|GLM/.test(stripInfo.text)),
       stripInfo ? (stripInfo.shown ? stripInfo.text.slice(0, 90) : 'hidden') : '-');
   add('趋势图有柱子', bars > 0, String(bars));
-  add('表注说明折算与金额口径', /折算/.test(tableNote) && /金额口径/.test(tableNote), '-');
+  /* 「金额口径」那句只在真有 cost-only 的行时才出现（Kimi 区间空窗就没有），
+     所以先验折算口径，再按需验金额口径。 */
+  add('表注说明折算口径', /折算/.test(tableNote), tableNote.slice(0, 80));
+  add('表注说明金额口径（有该口径行时）',
+      !rows.some((r) => r.tag === '金额口径') || /金额口径/.test(tableNote), '-');
   add('无文字溢出', overflow.length === 0, JSON.stringify(overflow));
   add('无控制台错误', errs.length === 0, errs.join(' | '));
 
