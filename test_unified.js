@@ -57,7 +57,8 @@ function mkModelDays(models, seed) {
   const pid = {
     deepseek: byName["DeepSeek"],
     kimi: byName["Kimi"],
-    zhipu: byName["Zhipu GLM"],
+    // 账户模式下的中文名与旧 CC Switch 里的英文名都认
+    zhipu: byName["Zhipu GLM"] || byName["智谱 GLM"],
   };
   if (!pid.deepseek || !pid.kimi || !pid.zhipu) {
     console.error("!! 未能从 /api/data 拿到三家 provider id:", byName);
@@ -118,6 +119,8 @@ function mkModelDays(models, seed) {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mock) }));
 
   await page.goto(BASE + "/?days=30", { waitUntil: "networkidle" });
+  // 四页布局：提供商卡片在「账户」页（其余查询在隐藏页面上也能取到文本）
+  await page.click('#railNav button[data-page="accounts"]');
   await page.waitForSelector("#providers .pcard", { timeout: 10000 });
   await page.waitForTimeout(700);
 

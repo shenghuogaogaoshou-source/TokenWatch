@@ -3,103 +3,65 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TokenWatch · CC Switch 用量与余额监控台</title>
+<title>TokenWatch · 多模型用量台</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-<div class="bg-grid" aria-hidden="true"></div>
+<div class="app">
 
-<header class="topbar">
-  <div class="brand">
-    <div class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 48 48" width="32" height="32">
-        <defs>
-          <linearGradient id="eyeG" x1="0%" y1="10%" x2="100%" y2="90%">
-            <stop offset="0%" stop-color="#22D3EE"/>
-            <stop offset="55%" stop-color="#3B82F6"/>
-            <stop offset="100%" stop-color="#818CF8"/>
-          </linearGradient>
-        </defs>
-        <path d="M 6.15 24 A 19 19 0 0 1 41.85 24" fill="none" stroke="url(#eyeG)" stroke-width="4.2" stroke-linecap="round"/>
-        <path d="M 41.85 24 A 19 19 0 0 1 6.15 24" fill="none" stroke="url(#eyeG)" stroke-width="4.2" stroke-linecap="round"/>
-        <circle cx="24" cy="24" r="4.9" fill="url(#eyeG)"/>
-        <circle cx="22.3" cy="22.4" r="1.5" fill="#ffffff" opacity="0.92"/>
-      </svg>
+  <!-- ============ 左侧导轨 ============ -->
+  <aside class="rail">
+    <div class="rail-brand">
+      <span class="mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="26" height="26">
+          <path d="M 19.02 3.87 A 12.5 12.5 0 1 1 12.98 3.87" fill="none" stroke="currentColor" stroke-width="2.2"/>
+          <circle cx="16" cy="16" r="6.4" fill="none" stroke="currentColor" stroke-width="0.8" opacity=".32"/>
+          <circle cx="16" cy="16" r="2.3" fill="currentColor"/>
+        </svg>
+      </span>
+      <div class="rail-brand-t">
+        <b>TokenWatch</b>
+        <small>多模型用量台</small>
+      </div>
     </div>
-    <div class="brand-text">
-      <h1>TokenWatch <span class="brand-sub">用量与余额监控台</span></h1>
-      <p>基于 CC Switch 接入的全部模型 · 自动查询官方余额 · 一键直达充值</p>
-    </div>
-  </div>
 
-  <div class="top-actions">
-    <div id="syncState" class="sync-chip" title="">
-      <span class="dot" id="syncDot"></span><span id="syncText">读取中…</span>
-    </div>
-    <button id="btnTheme" class="btn btn-ghost" title="切换浅色/暗色主题" aria-label="切换主题">
-      <svg id="themeIcon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" fill="currentColor"/></svg>
-    </button>
-    <button id="btnRefresh" class="btn btn-ghost" title="立即刷新全部余额与用量">
-      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13.65 2.5A7 7 0 1 0 15 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13.5 2v3.5H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      刷新
-    </button>
-    <button id="btnSettings" class="btn btn-ghost" title="设置">
-      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 10.2A2.2 2.2 0 1 0 8 5.8a2.2 2.2 0 0 0 0 4.4Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13.5 8.6c.3-.2.3-.6.3-.6s0-.4-.3-.6l-1.4-.8c-.3-.2-.4-.6-.3-.9l.2-1.4a.6.6 0 0 0-.9-.7l-1.4 1a1.5 1.5 0 0 1-1.4 0l-1.4-1a.6.6 0 0 0-.9.7l.2 1.4c.1.3 0 .7-.3.9l-1.4.8c-.3.2-.3.6-.3.6s0 .4.3.6l1.4.8c.3.2.4.6.3.9l-.2 1.4c-.1.4.2.7.5.7.2 0 .3-.1.4-.2l1.4-1a1.5 1.5 0 0 1 1.4 0l1.4 1c.1.1.3.1.4.2.4 0 .6-.3.5-.7l-.2-1.4c-.1-.3 0-.7.3-.9l1.4-.8Z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-      设置
-    </button>
-  </div>
-</header>
+    <nav class="rail-nav" id="railNav" aria-label="主导航">
+      <button type="button" data-page="overview" class="on">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 13V7m4 6V3m4 10V9m4 4V5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+        <span>总览</span>
+      </button>
+      <button type="button" data-page="accounts">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="8" cy="5.5" r="2.8" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M2.8 13.6c.4-2.6 2.6-4.1 5.2-4.1s4.8 1.5 5.2 4.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg>
+        <span>账户</span>
+      </button>
+      <button type="button" data-page="models">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.8 14 5v6l-6 3.2L2 11V5l6-3.2Z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/><path d="M2 5l6 3.2L14 5M8 8.2v6" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+        <span>模型</span>
+      </button>
+      <button type="button" data-page="pricing">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2.5 2.5h11v11h-11z" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M5 6h6M5 9h4M5 12h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <span>定价</span>
+      </button>
+    </nav>
 
-<main class="shell">
-  <!-- 顶部汇总 -->
-  <div class="sec-head">
-    <h2 class="sec-title">总览</h2>
-    <span class="sec-note">余额实时查询 · 用量以官网实扣口径优先，缺失自动回落本地记录</span>
-  </div>
-  <section class="tape" aria-label="汇总">
-    <div class="tape-item">
-      <div class="tape-k">可用余额 <span class="tape-note">充值制账户合计</span></div>
-      <div class="tape-v" id="tapeBalanceV">—</div>
-      <div class="tape-f" id="tapeBalanceF">按官方接口实时查询</div>
+    <div class="rail-foot">
+      <div class="rail-stat"><span>已接通</span><b id="railLive">—</b></div>
+      <div class="rail-stat"><span>余额合计</span><b id="railBal">—</b></div>
+      <div class="rail-sync" id="syncState" title="">
+        <span class="dot" id="syncDot"></span><span id="syncText">读取中…</span>
+      </div>
     </div>
-    <div class="tape-item">
-      <div class="tape-k"><span id="tapeCost7K">本月</span>消耗 <span class="tape-note" id="tapeCost7Note">官网优先</span></div>
-      <div class="tape-v" id="tapeCost7V">—</div>
-      <div class="tape-alt" id="tapeCost7Cny">—</div>
-      <div class="tape-f" id="tapeCost7F">按 CC Switch 用量日志统计</div>
-    </div>
-    <div class="tape-item">
-      <div class="tape-k"><span id="tapeTok7K">本月</span> Token <span class="tape-note">输入+输出+缓存</span></div>
-      <div class="tape-v" id="tapeTok7V">—</div>
-      <div class="tape-f">已接入提供商：<b id="tapeProviders">—</b></div>
-    </div>
-    <div class="tape-item">
-      <div class="tape-k">监控状态</div>
-      <div class="tape-v tape-v-sm" id="tapeActiveV">—</div>
-      <div class="tape-f" id="tapeActiveF">数据目录：<span id="tapeDb">~/.cc-switch/cc-switch.db</span></div>
-    </div>
-  </section>
+  </aside>
 
-  <!-- 提供商卡片 -->
-  <div class="sec-head">
-    <h2 class="sec-title">接入提供商</h2>
-    <span class="sec-note">余额实时查询 · 一键直达充值</span>
-  </div>
-  <section class="providers" id="providers" aria-label="各平台余量与用量"></section>
-
-  <!-- 分时段定价与当前时段推荐 -->
-  <div class="sec-head">
-    <h2 class="sec-title">当前时段与性价比推荐</h2>
-    <span class="sec-note" id="priceNote">按各家官网当前价折算，含错峰时段</span>
-  </div>
-  <section id="pricingPanel" aria-label="分时段定价与推荐"></section>
-
-  <!-- 明细面板 -->
-  <section class="panel" aria-label="用量明细">
-    <div class="panel-head">
-      <div class="panel-title">
-        <h2>用量明细</h2>
+  <!-- ============ 主区 ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="page-title">
+        <h1 id="pageTitle">总览</h1>
+        <p id="pageSub">余额实时查询 · 用量以官网实扣口径优先</p>
+      </div>
+      <div class="top-actions">
         <div class="seg" id="rangeSeg" role="tablist" aria-label="统计范围">
           <button data-days="today" title="今天 00:00 起">今天</button>
           <button data-days="d3">3 天</button>
@@ -108,51 +70,170 @@
           <button data-days="h180">半年</button>
           <button data-days="y365">全年</button>
         </div>
+        <button id="btnTheme" class="btn btn-ghost btn-icon" title="切换浅色/暗色主题" aria-label="切换主题">
+          <svg id="themeIcon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" fill="currentColor"/></svg>
+        </button>
+        <button id="btnRefresh" class="btn btn-ghost" title="立即刷新全部余额与用量">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13.65 2.5A7 7 0 1 0 15 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13.5 2v3.5H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="btn-t">刷新</span>
+        </button>
+        <button id="btnSettings" class="btn btn-ghost btn-icon" title="设置" aria-label="设置">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 10.2A2.2 2.2 0 1 0 8 5.8a2.2 2.2 0 0 0 0 4.4Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13.5 8.6c.3-.2.3-.6.3-.6s0-.4-.3-.6l-1.4-.8c-.3-.2-.4-.6-.3-.9l.2-1.4a.6.6 0 0 0-.9-.7l-1.4 1a1.5 1.5 0 0 1-1.4 0l-1.4-1a.6.6 0 0 0-.9.7l.2 1.4c.1.3 0 .7-.3.9l-1.4.8c-.3.2-.3.6-.3.6s0 .4.3.6l1.4.8c.3.2.4.6.3.9l-.2 1.4c-.1.4.2.7.5.7.2 0 .3-.1.4-.2l1.4-1a1.5 1.5 0 0 1 1.4 0l1.4 1c.1.1.3.1.4.2.4 0 .6-.3.5-.7l-.2-1.4c-.1-.3 0-.7.3-.9l1.4-.8Z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
       </div>
-      <div class="panel-legend" id="legend"></div>
-    </div>
+    </header>
 
-    <!-- 数据来源：供应商官网真实用量优先，未接通的自动回落 CC Switch 本地记录 -->
-    <div class="src-bar">
-      <span class="src-badge" id="srcBadge"><i class="src-dot"></i>读取中…</span>
-      <span class="src-hint" id="srcHint"></span>
-      <span class="src-credstate" id="srcCredState"></span>
-      <button type="button" class="btn btn-ghost btn-sm" id="btnPlatformCreds">平台凭据</button>
-    </div>
+    <main class="pages">
 
-    <div class="exp-strip" id="expStrip" hidden></div>
+      <!-- ---------------- 总览 ---------------- -->
+      <section class="page" data-page="overview">
+        <div class="kpis" aria-label="汇总">
+          <div class="kpi">
+            <div class="kpi-k">可用余额 <em>充值制账户合计</em></div>
+            <div class="kpi-v" id="tapeBalanceV">—</div>
+            <div class="kpi-f" id="tapeBalanceF">按官方接口实时查询</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-k"><span id="tapeCost7K">本月</span>消耗 <em id="tapeCost7Note">官网优先</em></div>
+            <div class="kpi-v" id="tapeCost7V">—</div>
+            <div class="kpi-f" id="tapeCost7Cny">—</div>
+            <div class="kpi-f" id="tapeCost7F">按官网实扣口径统计</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-k"><span id="tapeTok7K">本月</span> Token <em>输入+输出+缓存</em></div>
+            <div class="kpi-v" id="tapeTok7V">—</div>
+            <div class="kpi-f">已接入：<b id="tapeProviders">—</b></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-k">监控状态</div>
+            <div class="kpi-v kpi-v-sm" id="tapeActiveV">—</div>
+            <div class="kpi-f" id="tapeActiveF">数据目录：<span id="tapeDb">—</span></div>
+          </div>
+        </div>
 
-    <div id="platformView"></div>
+        <div class="grid-2">
+          <section class="card chart-card">
+            <div class="card-h">
+              <h2>每日用量</h2>
+              <span class="card-sub" id="chartSub">按账户堆叠 · 人民币</span>
+              <div class="grow"></div>
+              <div class="chart-toggle">
+                <label><input type="radio" name="metric" value="cost" checked><span>金额</span></label>
+                <label><input type="radio" name="metric" value="tokens"><span>Tokens</span></label>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <svg id="trendChart" class="trend" viewBox="0 0 1200 260" preserveAspectRatio="none" role="img" aria-label="用量趋势图"></svg>
+            </div>
+            <div class="panel-legend" id="legend"></div>
+          </section>
 
-    <div class="chart-wrap">
-      <div class="chart-toggle">
-        <label><input type="radio" name="metric" value="cost" checked><span>消耗金额</span></label>
-        <label><input type="radio" name="metric" value="tokens"><span>Tokens</span></label>
-      </div>
-      <svg id="trendChart" class="trend" viewBox="0 0 1200 260" preserveAspectRatio="none" role="img" aria-label="用量趋势图"></svg>
-    </div>
+          <section class="card acc-mini">
+            <div class="card-h">
+              <h2>账户</h2>
+              <span class="card-sub">按能力分档</span>
+            </div>
+            <div id="ovAccounts" class="ov-acc"></div>
+          </section>
+        </div>
 
-    <div class="table-wrap">
-      <table class="tbl">
-        <thead>
-          <tr>
-            <th>API / 平台</th><th>用量来源</th><th class="num">请求数</th>
-            <th class="num">输入 token</th><th class="num">输出 token</th>
-            <th class="num">缓存读 token</th><th class="num">消耗</th>
-            <th class="num">占比</th><th class="num">最后活跃</th>
-          </tr>
-        </thead>
-        <tbody id="modelRows"></tbody>
-      </table>
-      <p class="table-note" id="tableNote"></p>
-    </div>
-  </section>
+        <section class="card detail-card">
+          <div class="card-h">
+            <h2>用量明细</h2>
+            <span class="card-sub">一行一家 · 逐家标注口径</span>
+            <div class="grow"></div>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnPlatformCreds">平台凭据</button>
+          </div>
 
-  <footer class="foot">
-    <p><b>数据来源：</b>余额与用量均尽量取自各平台官方接口（用你的网页登录态直连供应商控制台，即账户实际扣费口径）；官网未接通或该平台不提供明细时，自动回落为该提供商的 <strong>CC Switch 本地记录</strong>，两者在同一个视图里合成展示、逐家标注来源。<strong>默认只统计已在 CC Switch 中接入的提供商</strong>；若本机没有 CC Switch（或库里没有任何提供商），会自动切到<strong>官网直连模式</strong>，按内置的 DeepSeek / Kimi / 智谱 GLM 三家目录工作 —— 只要在「平台凭据」里填入各家登录票据即可出数，不依赖 CC Switch。未接入通道（例如 Codex 直连的 gpt 系列）的用量不会出现在本页。平台凭据只保存在本机应用数据目录的 <code>platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
-    <p><b>说明：</b>「当前时段与性价比推荐」里的价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），该配比可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。官价表还没收录、但本地已经在用的新模型，会自动按 CC Switch 价目表折算并标「实时」，不必改代码。Token 折算按近 N 天实际用量混合单价（或模型官方标价）估算。<strong>页面所有金额都是人民币</strong>：三家官网本来返回人民币；只有 CC Switch 本地记录是美元计价，已按 ¥<span id="fxRate">7.10</span>/USD 折成人民币（可在 <code>config.json</code> 的 <code>usd_cny</code> 里改汇率）。卡片上的「登录票据」是按平台凭据的真实有效期标注的（Kimi 读 JWT 的 exp 声明；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」；DeepSeek 为非 JWT 长效凭据），若官网本次查询直接回报票据失效，则以实测为准标「已失效」并回落本地记录；票据将在 7 天内到期时会在明细区顶部给出提醒。在 CC Switch 中新增 / 修改供应商后，本工具会自动同步其平台与模型。</p>
-  </footer>
-</main>
+          <div class="src-bar">
+            <span class="src-badge" id="srcBadge"><i class="src-dot"></i>读取中…</span>
+            <span class="src-hint" id="srcHint"></span>
+            <span class="src-credstate" id="srcCredState"></span>
+          </div>
+
+          <div class="exp-strip" id="expStrip" hidden></div>
+
+          <div id="platformView"></div>
+
+          <div class="table-wrap">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>API / 平台</th><th>用量来源</th><th class="num">请求数</th>
+                  <th class="num">输入 token</th><th class="num">输出 token</th>
+                  <th class="num">缓存读 token</th><th class="num">消耗</th>
+                  <th class="num">占比</th><th class="num">最后活跃</th>
+                </tr>
+              </thead>
+              <tbody id="modelRows"></tbody>
+            </table>
+            <p class="table-note" id="tableNote"></p>
+          </div>
+        </section>
+
+        <details class="foot">
+          <summary>数据口径与说明</summary>
+          <p><b>数据来源：</b>余额与用量尽量取自各平台官方接口（用你的网页登录态直连供应商控制台，即账户实际扣费口径）；官网未接通或该平台不提供明细时，会在同一视图里逐家标注，不混算。平台凭据只保存在本机应用数据目录的 <code>platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
+          <p><b>定价：</b>价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。<strong>页面所有金额都是人民币</strong>：美元计价的部分已按 ¥<span id="fxRate">7.10</span>/USD 折算（可在 <code>config.json</code> 的 <code>usd_cny</code> 里改汇率）。票据有效期按真实凭据标注（Kimi 读 JWT 的 exp；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」），若官网本次查询回报票据失效，则以实测为准。</p>
+        </details>
+      </section>
+
+      <!-- ---------------- 账户 ---------------- -->
+      <section class="page" data-page="accounts" hidden>
+        <div class="page-head">
+          <div>
+            <h2>已接入账户</h2>
+            <p>每张卡片对应一个账户。点「平台凭据」填入该平台的控制台票据或 API Key，之后自动续期、不用重复登录。</p>
+          </div>
+          <div class="page-head-acts">
+            <button type="button" class="btn btn-primary btn-sm" id="btnAddAccount">添加账户</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnAccountsCreds">平台凭据</button>
+          </div>
+        </div>
+        <section class="providers" id="providers" aria-label="各平台余量与用量"></section>
+        <p class="page-note">账户来自各家官网或中转站，全部在本机完成采集与存储。同一家平台可以接入多个账号（例如两个中转站），分别独立统计余额与用量。</p>
+      </section>
+
+      <!-- ---------------- 模型 ---------------- -->
+      <section class="page" data-page="models" hidden>
+        <div class="page-head">
+          <div>
+            <h2>模型清单</h2>
+            <p>勾选你实际会用到的模型，总览和定价只显示这些。清单取自公开目录，价格随目录更新。</p>
+          </div>
+          <div class="page-head-acts">
+            <button type="button" class="btn btn-ghost btn-sm" id="mdlRefresh">更新目录</button>
+          </div>
+        </div>
+
+        <div class="mdl-bar">
+          <div class="mdl-search">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.6 10.6 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <input id="mdlSearch" type="search" placeholder="搜索模型或厂商，例如 gpt / 通义 / claude" autocomplete="off">
+          </div>
+          <label class="mdl-toggle"><input type="checkbox" id="mdlOnlySel"><span>只看已选</span></label>
+          <div class="mdl-count"><b id="mdlSelN">0</b> / <span id="mdlTotalN">0</span> 已选</div>
+        </div>
+
+        <div class="mdl-chips" id="mdlVendors"></div>
+        <div class="mdl-meta" id="mdlMeta">读取目录…</div>
+        <div class="mdl-list" id="mdlList"></div>
+      </section>
+
+      <!-- ---------------- 定价 ---------------- -->
+      <section class="page" data-page="pricing" hidden>
+        <div class="page-head">
+          <div>
+            <h2>定价与推荐</h2>
+            <p id="priceNote">按各家官网当前价折算，含错峰时段</p>
+          </div>
+        </div>
+        <section id="pricingPanel" aria-label="分时段定价与推荐"></section>
+      </section>
+
+    </main>
+  </div>
+</div>
 
 <!-- 设置弹窗 -->
 <div class="modal-mask" id="settingsModal" hidden>
@@ -198,6 +279,23 @@
   </div>
 </div>
 
+<!-- 添加 / 编辑账户 -->
+<div class="modal-mask" id="acctModal" hidden>
+  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="acctTitle">
+    <div class="modal-head">
+      <h3 id="acctTitle">添加账户</h3>
+      <button class="icon-btn" id="btnCloseAcct" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body" id="acctBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="btnAcctDelete" hidden>删除账户</button>
+      <span class="modal-foot-note" id="acctFoot">凭据只写本机 platform_creds.json，不上传。</span>
+      <button class="btn btn-ghost" id="btnAcctTest" hidden>测试连接</button>
+      <button class="btn btn-primary" id="btnAcctSave" hidden>保存</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 
 <!-- 平台凭据弹窗 -->
@@ -216,5 +314,8 @@
 </div>
 
 <script src="/static/app.js"></script>
+<script src="/static/models.js"></script>
+<script src="/static/accounts.js"></script>
+<script src="/static/shell.js"></script>
 </body>
 </html>

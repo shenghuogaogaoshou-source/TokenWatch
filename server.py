@@ -11,9 +11,17 @@ TokenWatch · CC Switch 用量 / 余量 / 充值 监控台（本地服务端）
 - 绑定 127.0.0.1，仅本机可访问
 仅使用 Python 标准库，无第三方依赖。
 """
-import json, os, re, base64, sqlite3, socket, subprocess, sys, time, threading, datetime
+import json, os, re, base64, sqlite3, socket, subprocess, sys, time, threading, datetime, uuid
 import concurrent.futures
 import http.server, socketserver, urllib.request, urllib.error
+
+# 让 core 包在源码运行和 PyInstaller 打包后都能被导入
+_HERE = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+from core import catalog as model_catalog
+from core import store as local_store
+from core import drivers
 
 if getattr(sys, "frozen", False):
     BASE_DIR   = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
@@ -171,13 +179,81 @@ def _builtin_mode(note):
     return builtin_providers(), None
 
 
+# ---------------- 账户（新架构的主角） ----------------
+# 三家用网页凭据直连的驱动沿用旧的凭据键（deepseek / kimi / zhipu），
+# 这样从上一版升上来的人不用重新登录；新接入的驱动（中转站等）凭据按账户 id 存。
+LEGACY_DRIVERS = ("deepseek", "kimi", "zhipu")
+DRIVER_LEGACY_KIND = {"kimi": "moonshot", "zhipu": "zhipu_plan"}
+
+SEED_ACCOUNTS = [("deepseek", "DeepSeek"), ("kimi", "Kimi"), ("zhipu", "智谱 GLM")]
+
+
+def ensure_seed_accounts():
+    """首次启动：把已有凭据的三家登记成账户，避免升级后页面突然空掉。
+
+    只有 platform_creds.json 里确实有内容的才建账户 —— 没登录过的平台不该
+    凭空出现在列表里，那会让人以为已经接入了。
+    """
+    try:
+        if local_store.list_accounts():
+            return
+        creds = load_platform_creds()
+    except Exception:
+        return
+    made = 0
+    for driver, label in SEED_ACCOUNTS:
+        c = creds.get(driver) or {}
+        vals = [str(v or "").strip() for k, v in c.items()
+                if k not in ("captured_at", "updated_at")]
+        if not any(vals):
+            continue
+        local_store.upsert_account({
+            "id": "acct-" + driver, "driver": driver, "label": label,
+            "capability": drivers.meta(driver)["capability"], "sort_index": made,
+        })
+        made += 1
+    if made:
+        print("[accounts] 已从既有凭据登记 %d 个账户" % made)
+
+
+def account_providers():
+    """账户表 → 与旧 provider 同形状的列表（前端不用改渲染逻辑）。"""
+    out = []
+    for a in local_store.list_accounts(enabled_only=True):
+        drv = a.get("driver") or "relay"
+        d = drivers.meta(drv)
+        out.append({
+            "id": a["id"],
+            "name": a.get("label") or d["label"],
+            "base_url": a.get("base_url") or "",
+            "api_key_masked": "", "_key": "",
+            "website_url": d.get("site") or "",
+            "is_current": False,
+            "kind": DRIVER_LEGACY_KIND.get(drv, drv),
+            "driver": drv,
+            "capability": a.get("capability") or d.get("capability") or "catalog",
+            "models": [],
+            "_acct": True,
+            # 凭据键：三家沿用旧键，其余按账户 id（同一平台可接多个账号）
+            "_cred_key": drv if drv in LEGACY_DRIVERS else a["id"],
+        })
+    return out
+
+
 def load_providers():
     """读取并过滤提供商；排除官方 / Codex / Claude 官方相关。
 
-    ⭐ 没有 CC Switch（未安装 / 库为空）时不再整体报错，而是回落到内置的三家目录。
-    以前这里直接返回错误，前端只能显示「无法读取监控数据」，等于把「只想登录
-    官网控制台」的用户挡在门外。
+    ⭐ 有账户表就只认账户表（新架构）：账户由用户在「账户」页自己添加，
+    与 CC Switch 无关。没有账户时才回落 CC Switch / 内置三家（兼容旧安装）。
     """
+    try:
+        accts = account_providers()
+    except Exception:
+        accts = []
+    if accts:
+        PROVIDER_SOURCE["mode"] = "accounts"
+        PROVIDER_SOURCE["note"] = ""
+        return accts, None
     if not os.path.exists(DB_PATH):
         return _builtin_mode("未检测到 CC Switch 数据库")
     try:
@@ -639,12 +715,21 @@ def balance_zhipu(p, timeout=12):
 
 def query_balance(prov):
     try:
-        if prov["kind"] == "deepseek":
-            return balance_deepseek(prov)
-        if prov["kind"] == "moonshot":
-            return balance_moonshot(prov)
-        if prov["kind"] == "zhipu_plan":
+        if prov["kind"] in ("deepseek", "moonshot", "zhipu_plan"):
+            if prov["kind"] == "deepseek":
+                return balance_deepseek(prov)
+            if prov["kind"] == "moonshot":
+                return balance_moonshot(prov)
             return balance_zhipu(prov)
+        # 新驱动：余额直接来自该驱动的采集结果（中转站 / OpenRouter 等）
+        fn = drivers.FETCHERS.get(prov["kind"])
+        if fn:
+            cred = load_platform_creds().get(prov.get("_cred_key") or prov["kind"]) or {}
+            r = fn(cred, 30)
+            if r.get("balance"):
+                return r["balance"]
+            return {"status": "error", "type": "unknown",
+                    "detail": r.get("detail") or "该平台暂未提供余额接口"}
         return {"status": "error", "type": "unknown", "detail": "该平台暂未内置余额接口"}
     except Exception as e:
         return {"status": "error", "detail": str(e)[:200]}
@@ -837,6 +922,9 @@ PLATFORM_SPEC = {
 
 # CC Switch 的 provider kind → 平台凭据 kind
 PLATFORM_KIND_OF = {"deepseek": "deepseek", "moonshot": "kimi", "zhipu_plan": "zhipu"}
+# 新驱动直接用 driver id 当平台 kind（与账户表一致），无需再映射
+for _d in drivers.DRIVERS:
+    PLATFORM_KIND_OF.setdefault(_d, _d)
 
 _PLATFORM_CREDS = {"data": None}
 
@@ -1802,6 +1890,7 @@ RL_UNTIL, RL_SECONDS = {}, 90
 
 
 _FETCHERS = {"deepseek": pu_deepseek, "kimi": pu_kimi, "zhipu": pu_zhipu}
+_FETCHERS.update(drivers.FETCHERS)
 
 
 def platform_usage_all(provs, days, force=False):
@@ -1811,14 +1900,21 @@ def platform_usage_all(provs, days, force=False):
                 and time.time() - PLATFORM_CACHE["t"] < PLATFORM_TTL):
             return PLATFORM_CACHE["data"]
     creds = load_platform_creds()
-    # 注意：结果必须按 CC Switch 的 provider id 作键（前端用 p.id 查），
-    # 同一 kind 只查一次，再挂到该 kind 名下第一个 provider 上。
+    # 注意：结果必须按 provider id 作键（前端用 p.id 查）。
+    # 老的三家同一 kind 只查一次（它们共用一份网页凭据）；账户模式下每个账户
+    # 有各自的凭据键，所以按账户分别查，不再按 kind 去重。
     targets, seen_kind = {}, set()
     for p in provs:
         pk = PLATFORM_KIND_OF.get(p.get("kind"))
-        if pk and pk not in seen_kind:
+        if not pk:
+            continue
+        wkey = p.get("_cred_key") or pk
+        if not p.get("_acct"):
+            if pk in seen_kind:
+                continue
             seen_kind.add(pk)
-            targets[p["id"]] = {"provider_id": p["id"], "provider_name": p["name"], "kind": pk}
+        targets[p["id"]] = {"provider_id": p["id"], "provider_name": p["name"],
+                            "kind": pk, "wkey": wkey}
     results, lock, threads = {}, threading.Lock(), []
 
     def work(pid, meta):
@@ -1831,7 +1927,7 @@ def platform_usage_all(provs, days, force=False):
         else:
             fn = _FETCHERS.get(k)
             try:
-                r = fn(creds.get(k) or {}, days)
+                r = fn(creds.get(meta.get("wkey") or k) or {}, days)
             except Exception as e:
                 r = {"status": "error", "detail": str(e)[:200]}
             if r.get("status") == "error" and "429" in str(r.get("detail") or ""):
@@ -1842,7 +1938,7 @@ def platform_usage_all(provs, days, force=False):
                     RL_UNTIL.pop(k, None)          # 恢复正常 → 解除冷却
         r["provider_id"] = meta["provider_id"]
         r["provider_name"] = meta["provider_name"]
-        r["label"] = PLATFORM_SPEC[meta["kind"]]["label"]
+        r["label"] = (PLATFORM_SPEC.get(meta["kind"]) or {}).get("label") or drivers.meta(meta["kind"])["label"]
         r["kind"] = meta["kind"]
         with lock:
             results[pid] = r
@@ -1863,7 +1959,7 @@ def platform_usage_all(provs, days, force=False):
             "status": "error", "detail": "官网接口响应超时（>40 秒），稍后自动重试",
             "provider_id": meta["provider_id"],
             "provider_name": meta["provider_name"],
-            "label": PLATFORM_SPEC[meta["kind"]]["label"],
+            "label": (PLATFORM_SPEC.get(meta["kind"]) or {}).get("label") or drivers.meta(meta["kind"])["label"],
             "kind": meta["kind"]}
     with PLATFORM_LOCK:
         PLATFORM_CACHE["t"] = time.time()
@@ -2166,6 +2262,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 elif name.endswith(".svg"):
                     ctype = "image/svg+xml"
                 return self._serve_file(name, ctype)
+            if path == "/api/catalog":
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                if q.get("refresh") == ["1"]:
+                    model_catalog.refresh(force=True)
+                data = model_catalog.load()
+                out = {"ok": True, "fetched_at": data.get("fetched_at", ""),
+                       "stale": data.get("stale", True), "total": data.get("count", 0),
+                       "groups": model_catalog.summary()["groups"]}
+                if q.get("full") == ["1"]:
+                    drv = (q.get("driver") or [""])[0]
+                    ms = data.get("models") or []
+                    if drv:
+                        ms = [m for m in ms if m.get("driver") == drv]
+                    out["models"] = ms
+                return self._json(out)
+            if path == "/api/accounts":
+                accts = account_providers()
+                for a in accts:
+                    a.pop("_key", None)
+                return self._json({"ok": True, "accounts": accts,
+                                   "drivers": drivers.public_list(),
+                                   "mode": PROVIDER_SOURCE["mode"]})
+            if path == "/api/drivers":
+                return self._json({"ok": True, "drivers": drivers.public_list()})
             if path == "/api/providers":
                 provs, err = load_providers()
                 if err:
@@ -2199,6 +2319,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 for p in provs:
                     po = usage["per_provider"].get(p["id"])
                     item = {k: v for k, v in p.items() if not k.startswith("_")}
+                    if p.get("_acct"):        # 前端据此显示「账户设置」入口
+                        item["_acct"] = True
+                        item["capability"] = p.get("capability")
                     item["usage"] = po if po else None
                     item["balance"] = balances.get(p["id"]) or {"status": "error", "detail": "未查询"}
                     # 估算（人民币 / 百万 token）
@@ -2324,6 +2447,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             config["price_mix"] = mix
                 save_config()
             return self._json({"ok": True})
+        if path == "/api/accounts":
+            return self._account_write(payload)
+        if path == "/api/account_test":
+            return self._account_test(payload)
         if path == "/api/platform_creds":
             kind = str(payload.get("kind") or "")
             if kind not in PLATFORM_SPEC:
@@ -2392,6 +2519,107 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json({"ok": True, "balance": balances_all(provs, force=True)})
         return self._json({"ok": False, "error": "404"}, 404)
 
+    # ---------------- 账户增删改 ----------------
+    def _invalidate(self):
+        BAL_CACHE["t"] = 0
+        BAL_CACHE["data"] = None
+        PROV_SIG["sig"] = None
+        with PLATFORM_LOCK:
+            PLATFORM_CACHE["t"] = 0
+            PLATFORM_CACHE["data"] = None
+
+    def _account_write(self, payload):
+        act = str(payload.get("action") or "add").strip()
+        aid = str(payload.get("id") or "").strip()
+        creds = dict(load_platform_creds())
+
+        if act == "delete":
+            if not aid:
+                return self._json({"ok": False, "error": "缺少账户 id"})
+            local_store.delete_account(aid)
+            if aid in creds:                 # 非三家的凭据就存在账户 id 下
+                creds.pop(aid, None)
+                save_platform_creds(creds)
+            self._invalidate()
+            return self._json({"ok": True})
+
+        driver = str(payload.get("driver") or "").strip()
+        if driver not in drivers.DRIVERS:
+            return self._json({"ok": False, "error": "未知的提供商"})
+        d = drivers.DRIVERS[driver]
+        if d.get("capability") == "catalog" and act == "add":
+            return self._json({"ok": False,
+                               "error": "该平台目前只支持查看模型与价格，暂不能采集账户数据"})
+
+        label = str(payload.get("label") or d["label"]).strip()[:40] or d["label"]
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        base_url = str(payload.get("base_url") or fields.get("base_url") or "").strip()
+        if base_url and not base_url.startswith(("http://", "https://")):
+            base_url = "https://" + base_url
+
+        if not aid:
+            aid = "acct-%s-%s" % (driver, uuid.uuid4().hex[:6])
+        ckey = driver if driver in LEGACY_DRIVERS else aid
+        cur = dict(creds.get(ckey) or {})
+        before = {k: str(v) for k, v in cur.items() if k != "captured_at"}
+        for f in d.get("auth") or []:
+            k = f["key"]
+            if k not in fields:
+                continue
+            v = str(fields[k] or "").strip()
+            if v and "…" not in v:           # 掩码原样回传时不覆盖真值
+                cur[k] = v
+            elif not v:
+                cur.pop(k, None)
+        if cur and {k: str(v) for k, v in cur.items() if k != "captured_at"} != before:
+            cur["captured_at"] = now_iso()
+        if cur:
+            creds[ckey] = cur
+        else:
+            creds.pop(ckey, None)
+        if not save_platform_creds(creds):
+            return self._json({"ok": False, "error": "写入凭据文件失败"})
+
+        local_store.upsert_account({
+            "id": aid, "driver": driver, "label": label, "base_url": base_url,
+            "capability": d.get("capability") or "detail",
+            "sort_index": int(payload.get("sort_index") or 100),
+        })
+        self._invalidate()
+        return self._json({"ok": True, "id": aid})
+
+    def _account_test(self, payload):
+        driver = str(payload.get("driver") or "").strip()
+        if driver not in drivers.DRIVERS:
+            return self._json({"ok": False, "error": "未知的提供商"})
+        aid = str(payload.get("id") or "").strip()
+        ckey = driver if driver in LEGACY_DRIVERS else (aid or driver)
+        cred = dict(load_platform_creds().get(ckey) or {})
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        for f in drivers.DRIVERS[driver].get("auth") or []:
+            k = f["key"]
+            if k in fields and str(fields[k] or "").strip() and "…" not in str(fields[k]):
+                cred[k] = str(fields[k]).strip()
+        if "base_url" in fields and str(fields["base_url"] or "").strip():
+            cred["base_url"] = str(fields["base_url"]).strip()
+        kind = PLATFORM_KIND_OF.get(driver, driver)
+        fn = _FETCHERS.get(kind) or drivers.FETCHERS.get(driver)
+        if not fn:
+            return self._json({"ok": True, "result": {
+                "status": "unavailable", "detail": "该平台没有可自动采集的接口"}})
+        try:
+            res = fn(cred, 30)
+        except Exception as e:
+            res = {"status": "error", "detail": str(e)[:200]}
+        # 测试只回报要点，别把几百行模型明细发给前端
+        if isinstance(res.get("models"), list):
+            res = dict(res)
+            res["model_count"] = len(res["models"])
+            res.pop("models", None)
+            res.pop("days", None)
+            res.pop("model_days", None)
+        return self._json({"ok": True, "result": res})
+
     def _serve_file(self, name, ctype):
         safe = os.path.normpath(name).replace("\\", "/")
         if safe.startswith("..") or "/" in safe:
@@ -2433,6 +2661,15 @@ def start_server(port=None):
 
 
 def main():
+    # 本地用量库：放在 HTTP 启动之前，避免首个请求撞上建表
+    try:
+        local_store.init_db()
+        ensure_seed_accounts()
+    except Exception as e:
+        print("[db] 本地库初始化失败:", e)
+    # 模型目录：后台预热，24 小时缓存；拉不到就用旧缓存，不阻塞界面
+    threading.Thread(target=lambda: model_catalog.refresh(), daemon=True).start()
+
     httpd, port = start_server()
     print("=" * 56)
     print("  TokenWatch · CC Switch 用量/余量/充值 监控台")

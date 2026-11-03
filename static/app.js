@@ -26,7 +26,7 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
 
 /* ---------- 格式化 ---------- */
 /* 全站只有人民币一种金额口径：三家官网本来返回 CNY；
-   CC Switch 本地记录是美元计价，已在服务端按 usd_cny 折成人民币。 */
+   本机用量记录是美元计价，已在服务端按 usd_cny 折成人民币。 */
 const N = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
 function money(v) {
   v = v || 0;
@@ -107,7 +107,7 @@ async function watchProviders() {
     if (!j.ok || !Array.isArray(j.providers)) return;
     const sig = providerSigFrom(j.providers);
     if (state.providerSig && sig !== state.providerSig && !state.loading) {
-      toast("检测到 CC Switch 提供商变更，正在同步…");
+      toast("检测到账户列表发生变化，正在同步…");
       await refreshAll(true);
     }
   } catch (e) { /* 静默重试 */ }
@@ -189,7 +189,7 @@ async function loadConfig() {
 }
 
 /* ============================================================
-   统一数据来源：官网真实用量优先，未覆盖的自动回落 CC Switch 本地记录
+   统一数据来源：官网真实用量优先，未覆盖的自动回落 本机用量记录
    ============================================================ */
 
 /* 平台侧「有按天明细」（usage 模式）且查询成功的 provider id */
@@ -236,10 +236,11 @@ function unifiedTotals() {
   return t;
 }
 
-/* 直连模式：没装 CC Switch / 库里没有提供商，按内置三家目录 + 官网凭据工作。
+/* 直连模式：账户来自「账户」页，与 CC Switch 无关。
    此时「回落本地记录」这个说法不成立（根本没有本地记录），文案要换掉。 */
 function builtinMode() {
-  return !!(state.dataMain && state.dataMain.source_mode === "builtin");
+  const m = state.dataMain && state.dataMain.source_mode;
+  return m === "builtin" || m === "accounts";
 }
 
 /* 数据来源状态条（统一视图，无切换开关） */
@@ -275,9 +276,8 @@ function syncSrcBar() {
                 (builtin ? "其余尚未配置凭据" : "其余自动回落本地记录")
               : "全部提供商均已接通官网接口，按账户实际扣费口径显示")
           : (builtin
-              ? "官网直连模式（" + ((state.dataMain && state.dataMain.source_note) || "未使用 CC Switch") +
-                "）· 点「平台凭据」填入各家登录票据即可出数"
-              : "官网用量暂不可得，当前以 CC Switch 本地记录呈现");
+              ? "官网直连模式 · 点「平台凭据」填入各家登录票据或 API Key 即可出数"
+              : "官网用量暂不可得，当前以本机用量记录呈现");
   }
   if (!cred) return;
   if (!kinds.length) { cred.textContent = ""; cred.className = "src-credstate"; return; }
@@ -414,9 +414,9 @@ function renderError(msg) {
   box.innerHTML = `<div class="errbox" style="margin:6px 0"><b>无法读取监控数据</b>　<span>${esc(msg)}</span></div>
     <p style="color:var(--ink-2);font-size:12.5px;line-height:1.8;margin:8px 2px">
       常见原因：<br>
-      ① CC Switch 桌面版尚未在本机初始化过（未找到 <code>~/.cc-switch/cc-switch.db</code>）；<br>
+      ① 还没有在「账户」页接入任何平台；<br>
       ② 数据库正被其它程序独占写锁（一般不影响，本工具以只读方式打开）；<br>
-      ③ 尚未在 CC Switch 中接入任何可用的第三方 API Key。
+      ③ 已接入平台但缺少可用的凭据（票据或 API Key）。
     </p>`;
   $("#providers").appendChild(box);
 }
@@ -437,8 +437,10 @@ function renderTape() {
   }
   const fx = (state.cfg && state.cfg.usd_cny) || 7.1;
   const totalCny = cny + usd * fx;      // 万一某家只返回美元余额，折成人民币后并入总额
+  /* 大数字用细字重、货币符号缩小 —— 靠字重与字号拉开层次，不靠加粗 */
+  const bigMoney = (v) => '<i class="cur">¥</i>' + esc(money(v).slice(1));
   if (totalCny > 0) {
-    $("#tapeBalanceV").textContent = money(totalCny);
+    $("#tapeBalanceV").innerHTML = bigMoney(totalCny);
     $("#tapeBalanceF").textContent =
       "可用余额合计" +
       (usd ? "（含按 ¥" + fx + "/USD 折算的美元余额）" : "") +
@@ -462,32 +464,33 @@ function renderTape() {
       ? (tot.localN || tot.req ? "官网 " + tot.platN + " 家实扣口径" : "官网实扣口径")
       : "本地记录";
   }
-  $("#tapeCost7V").textContent = money(tot.cost || 0);
+  $("#tapeCost7V").innerHTML = bigMoney(tot.cost || 0);
   const altEl = $("#tapeCost7Cny");
   if (altEl) {
     /* 主数字已经是人民币，这一行只交代口径：有没有掺本地记录、掺的那部分怎么来的 */
     altEl.textContent = tot.cost > 0
       ? (tot.localN
-          ? "含 " + tot.localN + " 家本地记录（原为美元，按 ¥" + fx + "/USD 折算）"
+          ? "含 " + tot.localN + " 家本机记录（原为美元，已按 ¥" + fx + "/USD 折算）"
           : "全部为官网账户实际扣费口径")
       : (anyPlat ? "官网侧" + rt + "暂无消耗记录" : "暂无消耗记录");
   }
   const srcF = tot.platN
-    ? "官网直连 " + tot.platN + " 家" + (tot.localN ? " + 本地兜底 " + tot.localN + " 家" : "")
-    : "按 CC Switch 本地记录";
+    ? "官网直连 " + tot.platN + " 家" + (tot.localN ? " · 本机记录 " + tot.localN + " 家" : "")
+    : "按本机记录";
   $("#tapeCost7F").textContent = tot.req
     ? tot.req + " 次请求 · " + srcF
     : (anyPlat ? rt + "官网侧暂无调用" : rt + "暂无调用记录");
-  $("#tapeTok7V").textContent = compactTok(tot.tok);
+  $("#tapeTok7V").innerHTML = String(compactTok(tot.tok)).replace(/([\d.]+)\s*(亿|万|k)?/,
+    (m, num, unit) => num + (unit ? '<i class="unit">' + unit + "</i>" : ""));
   $("#tapeProviders").textContent = provs.map((p) => p.name).join(" · ") || "—";
 
   const cur = provs.find((p) => p.is_current) || provs[0];
+  const u = (state.platform && state.platform.usage) || {};
+  const liveN = Object.values(u).filter((r) => r && (r.status === "ok" || r.status === "empty")).length;
   $("#tapeActiveV").textContent = provs.length ? "正常 · " + provs.length + " 家" : "未接入";
   $("#tapeActiveF").innerHTML =
-    (builtinMode()
-      ? "数据来源：<b>官网直连</b>（未使用 CC Switch）"
-      : "数据目录：<span id='tapeDb'>" + esc(shortDb()) + "</span>") + " · " +
-    (cur ? "当前：<b>" + esc(cur.name) + "</b>" : "");
+    "官网直连 <b>" + liveN + "</b> / " + provs.length + " 家 · " +
+    (cur ? "当前：<b>" + esc(cur.name) + "</b>" : "尚未接入账户");
   $("#fxRate").textContent = fx;
 }
 function shortDb() {
@@ -521,7 +524,7 @@ function renderPricing() {
   if (noteEl) {
     let note = `${p.now}（周${p.weekday}）· 综合单价按输入 / 缓存 / 输出配比折算，单位元 / 百万 tokens`;
     if (p.auto_models) {
-      note += ` · 另有 ${p.auto_models} 个在用的新模型按 CC Switch 价目表自动补充`;
+      note += ` · 另有 ${p.auto_models} 个在用的新模型按本机价目表自动补充`;
     }
     if (p.noprice_models) {
       note += ` · ${p.noprice_models} 个模型暂无可比价`;
@@ -557,9 +560,9 @@ function renderPricing() {
       const num = (x) => (x == null ? "—" : (x >= 10 ? x.toFixed(1) : x.toFixed(x >= 1 ? 2 : 3)));
       const off = m.discounted
         ? `<span class="pr-off" title="相较另一时段的全价">原价 ${price3(m.blended_baseline)}</span>` : "";
-      /* auto = 官价表还没收录、但本地已经在用（价格取自 CC Switch 价目表） */
+      /* auto = 官价表还没收录、但本地已经在用（价格取自本机价目表） */
       const tag = m.source === "auto"
-        ? `<i class="pr-new" title="官价表未收录，价格取自 CC Switch 价目表并折算为人民币">实时</i>` : "";
+        ? `<i class="pr-new" title="官价表未收录，价格取自本机价目表并折算为人民币">实时</i>` : "";
       return `<tr>
         <td class="pr-name">${esc(m.label)}${tag}</td>
         <td class="num">${num(pr.input)}</td>
@@ -779,6 +782,14 @@ function buildCard(p, i) {
   sBtn.href = p.website_url || "#"; sBtn.target = "_blank"; sBtn.rel = "noopener";
   foot.appendChild(rBtn);
   if (p.website_url) foot.appendChild(sBtn);
+  if (p._acct) {
+    const eBtn = el("button", "btn-site", "账户设置");
+    eBtn.type = "button";
+    eBtn.addEventListener("click", () => {
+      if (window.ACCT) window.ACCT.open(p.id);
+    });
+    foot.appendChild(eBtn);
+  }
   card.appendChild(foot);
   return card;
 }
@@ -976,10 +987,10 @@ function renderDetail() {
           : `，${nExp} 家官网凭据已失效、回落本机记录（需重新获取票据）`) : "") +
         (nLocal ? (builtinMode()
           ? `，${nLocal} 家尚未配置官网凭据（本区间按 0 计）`
-          : `，${nLocal} 家官网未接通、回落本机 CC Switch 记录（估算口径）`) : "") +
+          : `，${nLocal} 家官网未接通、回落本机用量记录（估算口径）`) : "") +
         (anyCostOnly ? "；带「金额口径」的平台官网只开放消费金额，不提供 token / 请求数" : "") +
         (anyNoReq ? "；带「无请求数」的平台官网账单不提供请求数，仅有 token 与金额" : "") +
-        `；金额统一为人民币口径，CC Switch 本地记录原为美元、已按 ¥${fxr}/USD 折算` +
+        `；金额统一为人民币口径，本机用量记录原为美元、已按 ¥${fxr}/USD 折算` +
         (zeroN
           ? `；${zeroN} 家在本区间内没有用量，按 0 计` +
             (nEmpty === zeroN ? "（官网均已接通）" : nEmpty ? `（其中 ${nEmpty} 家官网已接通）` : "")
@@ -1056,7 +1067,7 @@ function unifiedEmptyHtml() {
     return "已接通的平台只提供套餐额度，无按天明细<br><span style='font-size:11px;color:var(--ink-3)'>额度窗口见上方卡片</span>";
   }
   if (!anyCfg) {
-    return "统计区间内暂无用量记录<br><span style='font-size:11px;color:var(--ink-3)'>在 Claude Code / Codex 中调用后，CC Switch 会记录到本地；点「平台凭据」接通官网后可显示账户实扣口径</span>";
+    return "统计区间内暂无用量记录<br><span style='font-size:11px;color:var(--ink-3)'>在客户端里调用后会自动记录；接通官网凭据后可显示账户实扣口径</span>";
   }
   return "统计区间内暂无用量记录<br><span style='font-size:11px;color:var(--ink-3)'>官网与本机记录均未发现该区间内的调用</span>";
 }
@@ -1065,8 +1076,8 @@ function unifiedEmptyText() {
   const c = (state.platform && state.platform.creds) || {};
   const anyCfg = Object.values(c).some((x) => x && x.configured);
   return `统计区间（${rangeText()}）内暂无模型用量记录——` +
-    (anyCfg ? "官网侧与本机 CC Switch 记录均无数据。"
-            : "从 CC Switch 启用对应提供商并调用后会出现在这里；点「平台凭据」接通官网可切换为账户实扣口径。");
+    (anyCfg ? "官网侧与本机用量记录均无数据。"
+            : "在「账户」页接入对应平台并产生调用后，就会出现在这里；接通官网凭据可切换为账户实扣口径。");
 }
 
 /* 官网侧卡片：额度窗口 / 待配置 / 异常。usage 模式且正常的由图表承担，不出卡 */
@@ -1077,7 +1088,7 @@ function renderPlatformCards() {
   const ids = Object.keys(u);
   if (!ids.length) {
     host.appendChild(el("div", "plat-card info",
-      "CC Switch 中暂无可对应到官网用量的供应商。接入 DeepSeek / Kimi / 智谱 GLM 后会自动出现在这里，届时可逐家接通官网实扣口径。"));
+      "还没有接入任何平台。到「账户」页填入凭据后，各家的余额与用量会分别出现在这里。"));
     return host;
   }
   for (const pid of ids) {
@@ -1216,21 +1227,25 @@ function renderChart(provs, opts) {
   $("#legend").innerHTML = "";
 
   const { dayMap, series } = seriesOfDay(provs, isTok);
-  const daysSorted = Object.keys(dayMap).sort();
+  /* 横轴应该是「区间内的每一天」，不是「有数据的那几天」：
+     只画有数据的日子时，本月只用到 1 天就会变成一整块满宽色块，看不出趋势。 */
+  const span = Math.max(1, Math.min(365, state.rangeDays || 1));
+  const daysSorted = [];
+  for (let i = span - 1; i >= 0; i--) daysSorted.push(localISO(i));
 
-  if (!provs.length || !daysSorted.length) {
+  if (!provs.length || !Object.keys(dayMap).length) {
     svg.innerHTML = "";
     $("#legend").innerHTML = "";
     wrap.appendChild(el("div", "chart-empty", opts.emptyHtml ||
       (isTok ? "统计区间内暂无 Token 用量记录"
-             : "统计区间内暂无消耗记录<br><span style='font-size:11px;color:var(--ink-3)'>在 Claude Code / Codex 中调用后，CC Switch 会自动记录到本地</span>")));
+             : "统计区间内暂无消耗记录<br><span style='font-size:11px;color:var(--ink-3)'>在客户端里调用后会自动记录到本地</span>")));
     return;
   }
 
   /* 图例：按累计值取前 10 */
   const ranked = Object.keys(series).map((k) => {
     const s = series[k];
-    s.total = daysSorted.reduce((acc, d) => acc + (dayMap[d][k] || 0), 0);
+    s.total = daysSorted.reduce((acc, d) => acc + (((dayMap[d] || {})[k]) || 0), 0);
     return s;
   }).filter((s) => s.total > 0).sort((a, b) => b.total - a.total);
   const legend = $("#legend");
@@ -1245,9 +1260,11 @@ function renderChart(provs, opts) {
   const iw = W - padL - padR, ih = H - padT - padB;
   const n = daysSorted.length;
   const slot = iw / n;
-  const bw = Math.max(2, slot * 0.72);
+  /* 区间天数少时（比如每月 1 号看「本月」只有 1 天）柱子会被拉成一整块色块，
+     所以宽度设上限，让稀疏的图仍然像柱子而不是背景。 */
+  const bw = Math.min(56, Math.max(2, slot * 0.72));
   const totalPerDay = daysSorted.map((d) =>
-    Object.values(dayMap[d]).reduce((s, x) => s + x, 0));
+    Object.values(dayMap[d] || {}).reduce((s, x) => s + x, 0));
   const ymax = niceMax(Math.max(...totalPerDay, isTok ? 0 : 1e-6));
 
   let g = "";
@@ -1348,7 +1365,7 @@ function renderApiTable(provs, opts) {
   tbody.innerHTML = "";
   if (!rows.length) {
     tbody.innerHTML = `<tr class="no-rows"><td colspan="9">${opts.emptyText ||
-      `统计区间（${rangeText()}）内暂无用量记录——从 CC Switch 启用对应提供商并调用后会自动出现。`}</td></tr>`;
+      `统计区间（${rangeText()}）内暂无用量记录——在「账户」页接入平台并产生调用后会自动出现。`}</td></tr>`;
     $("#tableNote").textContent = opts.noteText || "";
     return;
   }
@@ -1369,10 +1386,10 @@ function renderApiTable(provs, opts) {
             ? "官网直连模式：该家凭据已失效（需要重新获取票据），本区间按 0 计"
             : "官网直连模式：尚未配置该家官网凭据，本区间按 0 计")
       : (r.why === "empty"
-          ? "该家官网接口已接通，但本统计区间内官网没有用量记录，此处回落本机 CC Switch 记录（通常为 0）"
+          ? "该家官网接口已接通，但本统计区间内官网没有用量记录，此处回落本机用量记录（通常为 0）"
           : r.why === "expired"
-            ? "该家官网凭据已失效（需要重新获取票据），当前回落本机 CC Switch 记录（估算口径）"
-            : "官网凭据未接通、或该平台官网不提供明细，回落本机 CC Switch 记录（估算口径）") +
+            ? "该家官网凭据已失效（需要重新获取票据），当前回落本机用量记录（估算口径）"
+            : "官网凭据未接通、或该平台官网不提供明细，回落本机用量记录（估算口径）") +
         "；本地记录原为美元，已按 ¥" + fxr + "/USD 折算";
     const srcTag = r.src === "platform"
       ? `<span class="src-tag plat" title="取自该平台官网接口，账户实际扣费口径">官网实扣</span>`
@@ -1582,7 +1599,7 @@ function buildPlatformForm() {
 
     host.appendChild(block);
   }
-  $("#platformFootNote").textContent = "凭据仅存本机，不上传、不同步 CC Switch。";
+  $("#platformFootNote").textContent = "凭据仅存本机，不上传、不同步到任何外部服务。";
 }
 
 function focusPlatform(kind) {
