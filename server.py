@@ -2660,8 +2660,11 @@ def start_server(port=None):
     return httpd, port
 
 
-def main():
-    # 本地用量库：放在 HTTP 启动之前，避免首个请求撞上建表
+def bootstrap():
+    """启动前的本地准备，桌面端与命令行入口共用。
+
+    必须在 HTTP 启动之前跑：首个请求会读 accounts 表，晚建表就是空列表。
+    """
     try:
         local_store.init_db()
         ensure_seed_accounts()
@@ -2670,6 +2673,9 @@ def main():
     # 模型目录：后台预热，24 小时缓存；拉不到就用旧缓存，不阻塞界面
     threading.Thread(target=lambda: model_catalog.refresh(), daemon=True).start()
 
+
+def main():
+    bootstrap()
     httpd, port = start_server()
     print("=" * 56)
     print("  TokenWatch · CC Switch 用量/余量/充值 监控台")

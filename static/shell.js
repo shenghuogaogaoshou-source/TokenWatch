@@ -80,7 +80,13 @@ function renderOvAccounts() {
     } else if (b && b.status === "ok" && b.type === "plan") {
       v = "套餐"; vsub = "订阅制";
     } else {
-      v = "—"; vsub = b && b.detail ? String(b.detail).slice(0, 10) : "未接通";
+      v = "—";
+      // 这里只有一列宽度，别把错误详情整段塞进来（会截成「未提供 DeepSe」）
+      const d = (b && b.detail) ? String(b.detail) : "";
+      if (/API\s*Key/i.test(d)) vsub = "需 API Key";
+      else if (/未登录|重新登录|票据|令牌|凭据/i.test(d)) vsub = "需重新登录";
+      else if (/暂未提供|不支持/i.test(d)) vsub = "无余额接口";
+      else vsub = "未接通";
     }
     return '<div class="ov-row">' +
       '<span class="ov-dot" style="background:' + dotColor(p) + '"></span>' +

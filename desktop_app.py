@@ -109,6 +109,7 @@ def main():
             webbrowser.open(url)
         return
 
+    srv.bootstrap()
     httpd, port = srv.start_server(port=default_port)
     url = "http://127.0.0.1:%d/" % port
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
