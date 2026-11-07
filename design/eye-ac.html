@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TokenWatch · A+C 精修</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#F8F3E6;color:#221B10;
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    padding:36px 40px 44px;-webkit-font-smoothing:antialiased;
+  }
+  h1{font-family:Georgia,"Songti SC",serif;font-size:23px;font-weight:400;letter-spacing:-.01em}
+  .sub{font-size:12px;color:#6A5F4C;margin-top:7px;line-height:1.75;max-width:920px}
+  .wrap{margin-top:24px;border-top:1.5px solid #221B10}
+  .v{display:grid;grid-template-columns:262px 1fr;gap:28px;padding:24px 0 26px;
+     border-bottom:1px solid #E2D5BB;align-items:start}
+  .v .code{font-family:Georgia,serif;font-size:11px;letter-spacing:.16em;color:#9A8C74}
+  .v .nm{font-size:15px;font-weight:600;margin-top:4px}
+  .v .ds{font-size:11.5px;color:#6A5F4C;line-height:1.8;margin-top:8px}
+  .v .ds b{color:#221B10}
+  .tags{display:flex;gap:6px;margin-top:11px;flex-wrap:wrap}
+  .tag{font-size:9.5px;letter-spacing:.06em;padding:2px 7px;border:1px solid #C9B896;color:#6A5F4C}
+  .tag.hot{border-color:#963A2B;color:#963A2B}
+  .stage{display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap}
+  .grp{display:flex;flex-direction:column;gap:8px}
+  .grp .lb{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#9A8C74}
+  .row{display:flex;gap:12px;align-items:flex-end}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:4px}
+  .cell small{font-size:8.5px;color:#9A8C74}
+  .pad{padding:10px;border-radius:4px;background:#141414}
+  .pad.l{background:#FFFDF7;border:1px solid #E2D5BB}
+  .tile{border-radius:22.5%;overflow:hidden;display:block}
+  .tile svg{display:block}
+  .note{margin-top:20px;font-size:11.5px;color:#6A5F4C;line-height:1.95}
+  .note b{color:#221B10}
+</style>
+</head>
+<body>
+<h1>A+C 精修 · 取景框包住眼睑</h1>
+<p class="sub">外圈细正圆负责 32px 以下的骨架，内部杏仁形眼睑负责大图的眼睛感，深色巩膜保留机器眼的气质。刻度 9 根、均分 3 组，组间留 102° 空档，正上方那道最宽的空档就是旧图标的缺口位置。</p>
+
+<div class="wrap" id="wrap"></div>
+
+<p class="note">
+  <b>小尺寸怎么减：</b>32–48 删刻度、眼睑线加粗；16–24 再删眼睑，只留「外环 + 虹膜 + 瞳孔」三层。这套减法和现在线上那个图标用的是同一个思路，所以从 256 缩到 16px 不会出现结构突变。<br>
+  <b>为什么两版共用同一套眼睛：</b>眼睑宽 144、开度 120、虹膜直径 104，眼角距外环内缘留 17 的余量。三个方案里只有这个比例能让眼角不顶到环上。
+</p>
+
+<script>
+const V = {
+  seg: {
+    code:'A+C · 1', nm:'环上断三段', tags:['推荐','一个元素两义'], mode:'seg',
+    ds:'外环断成 3 段弧，缺口本身就是分组。<b>同一个环同时说「取景框」和「3 个来源」</b>，画面里没有多余零件。16px 时缺口会自动并回完整圆，不会留噪点。'
+  },
+  tick: {
+    code:'A+C · 2', nm:'环外三簇刻度', tags:['更直白','多一层细节'], mode:'tick',
+    ds:'环保持完整，外面放 3 簇短刻度（每簇 3 根）。<b>「在计量」这层意思更明确</b>，代价是环外多了一圈碎片，32px 以下全部消失。'
+  }
+};
+
+const groups = (() => {
+  const out = [];
+  for (let g = 0; g < 3; g++) {
+    const base = g * 120;
+    for (let k = -1; k <= 1; k++) out.push(base + k * 9);
+  }
+  return out;
+})();
+
+function draw(small, tiny, mode){
+  const ringW = tiny ? 14 : small ? 9 : 7.5;
+  const lidW  = small ? 11 : 7;
+  const irisR = tiny ? 50 : small ? 50 : 52;
+  const pupilR = tiny ? 16 : 17;
+
+  // 三组的两种说法：环上断 3 段（seg），或环外 3 簇短刻度（tick）
+  const ticks = (mode === 'tick' && !small && !tiny) ? groups.map(a => {
+    const r = a * Math.PI / 180, ri = 100, ro = 107;
+    return `<line x1="${(128+ri*Math.cos(r)).toFixed(1)}" y1="${(128+ri*Math.sin(r)).toFixed(1)}"
+      x2="${(128+ro*Math.cos(r)).toFixed(1)}" y2="${(128+ro*Math.sin(r)).toFixed(1)}"
+      stroke="#9FD4F2" stroke-width="2.4" opacity=".5" stroke-linecap="butt"/>`;
+  }).join('') : '';
+
+  // 环：seg 模式下断成 3 段，每段 110°，缺口 10°；小尺寸缺口消失，自动回到完整圆
+  const ring = (mode === 'seg' && !tiny)
+    ? `<circle cx="128" cy="128" r="93" fill="none" stroke="url(#ga)" stroke-width="${ringW}"
+        stroke-dasharray="178.5 16.2" transform="rotate(5 128 128)"/>`
+    : `<circle cx="128" cy="128" r="93" fill="none" stroke="url(#ga)" stroke-width="${ringW}"/>`;
+
+  // 杏仁眼睑：二次贝塞尔，宽 144、开度 120，眼角离正圆留 17 的余量
+  const lidPath = 'M56 128 Q128 8 200 128 Q128 248 56 128 Z';
+  const lid = tiny ? '' : `
+    <path d="M56 128 Q128 8 200 128" fill="none" stroke="url(#ga)" stroke-width="${lidW}" stroke-linecap="round"/>
+    <path d="M56 128 Q128 248 200 128" fill="none" stroke="url(#ga)" stroke-width="${lidW}" stroke-linecap="round"/>`;
+
+  const clip = tiny ? '' : `<clipPath id="lid"><path d="${lidPath}"/></clipPath>`;
+  const irisClip = tiny ? '' : ' clip-path="url(#lid)"';
+
+  return `<defs>${clip}</defs>
+    ${ticks}
+    ${ring}
+    <circle cx="128" cy="128" r="${irisR}" fill="url(#gb)"${irisClip}/>
+    ${lid}
+    <circle cx="128" cy="128" r="${pupilR}" fill="#080D18"/>
+    ${tiny ? '' : `<circle cx="120" cy="120" r="${small?6:5}" fill="#F2FEFF" opacity=".72"/>`}`;
+}
+
+const sizes = [256, 64, 32, 16];
+document.getElementById('wrap').innerHTML = ['seg','tick'].map(id => {
+  const v = V[id];
+  const mk = () => sizes.map(s => {
+    const sfx = id + s;
+    const tiny = s <= 24, small = s <= 48;
+    const body = draw(small, tiny, v.mode)
+      .replace(/#ga\b/g, '#ga' + sfx)
+      .replace(/#gb\b/g, '#gb' + sfx)
+      .replace(/url\(#lid\)/g, 'url(#lid' + sfx + ')')
+      .replace(/id="lid"/g, 'id="lid' + sfx + '"');
+    return `<div class="cell"><div class="pad ${s===256?'':'l'}"><div class="tile">
+      <svg width="${s}" height="${s}" viewBox="0 0 256 256">
+        <defs>
+          <linearGradient id="ga${sfx}" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#2ED3E8"/><stop offset="1" stop-color="#5B7CFA"/></linearGradient>
+          <linearGradient id="gb${sfx}" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#2ED3E8"/><stop offset="1" stop-color="#5B7CFA"/></linearGradient>
+          <linearGradient id="gt${sfx}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#171E30"/><stop offset="1" stop-color="#090C14"/></linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="57.6" fill="url(#gt${sfx})"/>
+        ${body}
+      </svg></div></div><small>${s}</small></div>`;
+  }).join('');
+  return `<div class="v">
+    <div>
+      <div class="code">${v.code}</div>
+      <div class="nm">${v.nm}</div>
+      <div class="ds">${v.ds}</div>
+      <div class="tags">${v.tags.map((t,i)=>`<span class="tag${i===0?' hot':''}">${t}</span>`).join('')}</div>
+    </div>
+    <div class="stage">
+      <div class="grp"><div class="lb">深底 · 任务栏尺寸</div><div class="row">${mk()}</div></div>
+    </div>
+  </div>`;
+}).join('');
+</script>
+</body>
+</html>
