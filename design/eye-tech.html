@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TokenWatch · 科技感眼睛 三个结构方案</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#F8F3E6;color:#221B10;
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    padding:36px 40px 44px;-webkit-font-smoothing:antialiased;
+  }
+  h1{font-family:Georgia,"Songti SC",serif;font-size:23px;font-weight:400;letter-spacing:-.01em}
+  .sub{font-size:12px;color:#6A5F4C;margin-top:7px;line-height:1.7;max-width:900px}
+  .wrap{margin-top:24px;border-top:1.5px solid #221B10}
+  .v{display:grid;grid-template-columns:250px 1fr;gap:28px;padding:22px 0 24px;
+     border-bottom:1px solid #E2D5BB;align-items:start}
+  .v .code{font-family:Georgia,serif;font-size:11px;letter-spacing:.16em;color:#9A8C74}
+  .v .nm{font-size:15px;font-weight:600;margin-top:4px}
+  .v .ds{font-size:11.5px;color:#6A5F4C;line-height:1.8;margin-top:8px}
+  .v .ds b{color:#221B10}
+  .tags{display:flex;gap:6px;margin-top:11px;flex-wrap:wrap}
+  .tag{font-size:9.5px;letter-spacing:.06em;padding:2px 7px;border:1px solid #C9B896;color:#6A5F4C}
+  .tag.hot{border-color:#963A2B;color:#963A2B}
+  .stage{display:flex;gap:26px;align-items:flex-start}
+  .grp{display:flex;flex-direction:column;gap:8px}
+  .grp .lb{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#9A8C74}
+  .row{display:flex;gap:11px;align-items:flex-end}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:4px}
+  .cell small{font-size:8.5px;color:#9A8C74}
+  .pad{padding:9px;border-radius:4px;background:#141414}
+  .pad.l{background:#FFFDF7;border:1px solid #E2D5BB}
+  .tile{border-radius:22.5%;overflow:hidden;display:block}
+  .tile svg{display:block}
+  footer{margin-top:20px;font-size:11px;color:#6A5F4C;line-height:1.9}
+  footer b{color:#221B10}
+</style>
+</head>
+<body>
+<h1>科技感的眼睛 · 三个结构方案</h1>
+<p class="sub">结构草图，未做最终精修。三个方案都在回答同一个问题：<b>「眼睛」负责像不像，「科技感」负责什么？</b>功能暗示只放一个符号，因为 24px 装不下第二个。</p>
+
+<div class="wrap" id="wrap"></div>
+
+<footer><b>看 32 和 16 两格。</b>眼睛感在 256px 是怎么都能做出来的，真正决定成败的是它缩到任务栏还认不认得出来。</footer>
+
+<script>
+const V = {};
+
+/* ---- A：取景框 + 横椭圆虹膜 ---- */
+V.a = {
+  code:'A', nm:'取景框眼', tags:['推荐','平衡'],
+  ds:'外圈一道<b>细正圆</b>当取景框，里面一颗<b>横向椭圆虹膜</b>，瞳孔是暗的、带一点高光。椭圆上下被正圆框住，自然形成眼眶。外圈 8 根短刻度暗示计量。',
+  tile:['#171E30','#090C14'], ring:['#2ED3E8','#5B7CFA'], iris:['#5B7CFA','#2ED3E8'],
+  draw(s, small){
+    const ticks = small ? '' : [0,45,90,135,180,225,270,315].filter(a=>a!==270).map(a=>{
+      const r=a*Math.PI/180, ri=104, ro=112;
+      return `<line x1="${128+ri*Math.cos(r)}" y1="${128+ri*Math.sin(r)}" x2="${128+ro*Math.cos(r)}" y2="${128+ro*Math.sin(r)}" stroke="#A9D8F5" stroke-width="2.2" opacity=".55"/>`;
+    }).join('');
+    const ry = small ? 54 : 42;
+    return `<circle cx="128" cy="128" r="93" fill="none" stroke="url(#ga)" stroke-width="7.5"/>
+      ${ticks}
+      <ellipse cx="128" cy="128" rx="${small?52:59}" ry="${ry}" fill="url(#gb)"/>
+      <circle cx="128" cy="128" r="${small?15:14.5}" fill="#0A1020"/>
+      <circle cx="${small?122:120}" cy="${small?122:119}" r="${small?4:4.6}" fill="#EAFBFF" opacity=".75"/>`;
+  }
+};
+
+/* ---- B：光圈眼（多段虹膜） ---- */
+V.b = {
+  code:'B', nm:'光圈眼', tags:['科技感最强','最像镜头'],
+  ds:'沿用现在这套骨架：粗外环带缺口 + 环内三段等分弧，像相机光圈叶片。三段弧代表<b>多个模型汇聚到同一个焦点</b>，瞳孔中间一道竖线。',
+  tile:['#171E30','#090C14'], ring:['#2ED3E8','#5B7CFA'], iris:['#2ED3E8','#5B7CFA'],
+  draw(s, small){
+    if (small) {
+      return `<circle cx="128" cy="128" r="69" fill="none" stroke="url(#ga)" stroke-width="15" stroke-dasharray="399 34" transform="rotate(284 128 128)"/>
+        <circle cx="128" cy="128" r="13" fill="#EAFBFF"/>`;
+    }
+    const per = 2*Math.PI*52, seg = per*(360/3 - 22)/360, gapLen = per*22/360;
+    let arcs = '';
+    for (let k=0;k<3;k++){
+      arcs += `<circle cx="128" cy="128" r="52" fill="none" stroke="url(#gb)" stroke-width="5"
+        stroke-dasharray="${seg.toFixed(1)} ${(per-seg).toFixed(1)}"
+        stroke-dashoffset="${(-k*per/3).toFixed(1)}" transform="rotate(-104 128 128)"/>`;
+    }
+    return `<circle cx="128" cy="128" r="69" fill="none" stroke="url(#ga)" stroke-width="15.5" stroke-dasharray="399 34" transform="rotate(284 128 128)"/>
+      <circle cx="128" cy="128" r="46.75" fill="none" stroke="rgba(120,150,255,.28)" stroke-width="2.2"/>
+      ${arcs}
+      <circle cx="128" cy="128" r="13" fill="#EAFBFF"/>
+      <rect x="126.4" y="112" width="3.2" height="32" rx="1.6" fill="#0A1020" opacity=".55"/>`;
+  }
+};
+
+/* ---- C：眼睑 + 扫描线 ---- */
+V.c = {
+  code:'C', nm:'眼睑眼', tags:['最像眼睛','小尺寸最险'],
+  ds:'上下两条弧线画出真正的杏仁形眼眶，虹膜被眼睑裁切，中间一道水平<b>扫描线</b>穿过。眼睛感最直白，但杏仁形在 16px 会糊成一粒。',
+  tile:['#171E30','#090C14'], ring:['#2ED3E8','#5B7CFA'], iris:['#5B7CFA','#2ED3E8'],
+  draw(s, small){
+    if (small) {
+      return `<circle cx="128" cy="128" r="70" fill="none" stroke="url(#ga)" stroke-width="12"/>
+        <circle cx="128" cy="128" r="34" fill="url(#gb)"/>
+        <circle cx="128" cy="128" r="13" fill="#0A1020"/>`;
+    }
+    return `<defs><clipPath id="lidclip">
+        <path d="M16 128 Q128 46 240 128 Q128 210 16 128 Z"/></clipPath></defs>
+      <circle cx="128" cy="128" r="58" fill="url(#gb)" clip-path="url(#lidclip)"/>
+      <circle cx="128" cy="128" r="16" fill="#0A1020"/>
+      <circle cx="121" cy="121" r="4.4" fill="#EAFBFF" opacity=".7"/>
+      <path d="M14 128 Q128 40 242 128" fill="none" stroke="url(#ga)" stroke-width="7" stroke-linecap="round"/>
+      <path d="M14 128 Q128 216 242 128" fill="none" stroke="url(#ga)" stroke-width="7" stroke-linecap="round"/>
+      <line x1="58" y1="128" x2="198" y2="128" stroke="#8FE3F2" stroke-width="1.8" opacity=".85"/>
+      <circle cx="58" cy="128" r="3" fill="#8FE3F2"/><circle cx="198" cy="128" r="3" fill="#8FE3F2"/>`;
+  }
+};
+
+const sizes = [256, 64, 32, 16];
+document.getElementById('wrap').innerHTML = ['a','b','c'].map(id => {
+  const v = V[id];
+  const mk = () => sizes.map(s => {
+    const small = s <= 32;
+    const sfx = id + s;
+    // 同页有多个 SVG，渐变 id 必须各自唯一，否则后画的会串色
+    const body = v.draw(s, small)
+      .replace(/#ga\b/g, '#ga' + sfx)
+      .replace(/#gb\b/g, '#gb' + sfx)
+      .replace(/lidclip/g, 'lidclip' + sfx);
+    return `<div class="cell"><div class="pad ${s===256?'':'l'}"><div class="tile">
+      <svg width="${s}" height="${s}" viewBox="0 0 256 256">
+        <defs>
+          <linearGradient id="ga${sfx}" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="${v.ring[0]}"/><stop offset="1" stop-color="${v.ring[1]}"/></linearGradient>
+          <linearGradient id="gb${sfx}" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="${v.iris[0]}"/><stop offset="1" stop-color="${v.iris[1]}"/></linearGradient>
+          <linearGradient id="g${sfx}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="${v.tile[0]}"/><stop offset="1" stop-color="${v.tile[1]}"/></linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="57.6" fill="url(#g${sfx})"/>
+        ${body}
+      </svg></div></div><small>${s}</small></div>`;
+  }).join('');
+  return `<div class="v">
+    <div>
+      <div class="code">方案 ${v.code}</div>
+      <div class="nm">${v.nm}</div>
+      <div class="ds">${v.ds}</div>
+      <div class="tags">${v.tags.map((t,i)=>`<span class="tag${i===0?' hot':''}">${t}</span>`).join('')}</div>
+    </div>
+    <div class="stage"><div class="grp"><div class="lb">任务栏真实尺寸</div><div class="row">${mk()}</div></div></div>
+  </div>`;
+}).join('');
+</script>
+</body>
+</html>

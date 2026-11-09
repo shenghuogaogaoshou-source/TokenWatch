@@ -20,7 +20,7 @@ from . import paths
 # 只有「合计」没有模型明细的账户（如某些中转站只给总额），明细行用这个占位模型名
 AGG_MODEL = "__total__"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     currency     TEXT DEFAULT 'CNY',
     sort_index   INTEGER DEFAULT 100,
     enabled      INTEGER DEFAULT 1,
+    models       TEXT DEFAULT '[]',        -- 该账户开放的模型（JSON 数组）；空 = 不限制
     created_at   TEXT DEFAULT '',
     last_ok_at   TEXT DEFAULT '',
     last_error   TEXT DEFAULT ''
@@ -101,12 +102,27 @@ def init_db(c=None):
     with _init_lock:
         if key not in _inited:
             c.executescript(_DDL)
-            c.execute("INSERT OR IGNORE INTO meta(k, v) VALUES('schema_version', ?)",
+            _migrate(c)
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('schema_version', ?)",
                       (str(SCHEMA_VERSION),))
             c.commit()
             _inited.add(key)
     if own:
         c.close()
+
+
+def _migrate(c):
+    """老库补列。CREATE TABLE IF NOT EXISTS 不会给已存在的表加字段，
+    所以升级上来的安装必须在这里显式 ALTER，否则写 models 会整条失败。"""
+    try:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(accounts)").fetchall()}
+    except Exception:
+        return
+    if "models" not in cols:
+        try:
+            c.execute("ALTER TABLE accounts ADD COLUMN models TEXT DEFAULT '[]'")
+        except Exception:
+            pass
 
 
 # ---------------- 账户 ----------------
@@ -126,33 +142,65 @@ def upsert_account(rec):
         "created_at": str(rec.get("created_at") or ""),
         "last_ok_at": str(rec.get("last_ok_at") or ""),
         "last_error": str(rec.get("last_error") or ""),
+        "models": _models_json(rec.get("models")),
     }
     c = conn()
     try:
-        cur = c.execute("SELECT id, created_at FROM accounts WHERE id=?", (aid,)).fetchone()
+        cur = c.execute("SELECT id, created_at, last_ok_at, models FROM accounts WHERE id=?",
+                        (aid,)).fetchone()
         if cur:
             # 已存在：不覆盖 created_at / last_ok_at，除非显式传入
             for k in ("created_at", "last_ok_at"):
                 if not fields[k]:
                     fields[k] = cur[k] or ""
+            # models 同理：没传这个键就保持原值，避免「改个名字把模型清单清空」
+            if rec.get("models") is None:
+                fields["models"] = cur["models"] or "[]"
             c.execute(
                 "UPDATE accounts SET driver=?, label=?, base_url=?, capability=?, currency=?, "
-                "sort_index=?, enabled=?, created_at=?, last_ok_at=?, last_error=? WHERE id=?",
+                "sort_index=?, enabled=?, created_at=?, last_ok_at=?, last_error=?, models=? "
+                "WHERE id=?",
                 (fields["driver"], fields["label"], fields["base_url"], fields["capability"],
                  fields["currency"], fields["sort_index"], fields["enabled"],
-                 fields["created_at"], fields["last_ok_at"], fields["last_error"], aid))
+                 fields["created_at"], fields["last_ok_at"], fields["last_error"],
+                 fields["models"], aid))
         else:
             c.execute(
                 "INSERT INTO accounts(id, driver, label, base_url, capability, currency, "
-                "sort_index, enabled, created_at, last_ok_at, last_error) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "sort_index, enabled, created_at, last_ok_at, last_error, models) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (aid, fields["driver"], fields["label"], fields["base_url"], fields["capability"],
                  fields["currency"], fields["sort_index"], fields["enabled"],
-                 fields["created_at"], fields["last_ok_at"], fields["last_error"]))
+                 fields["created_at"], fields["last_ok_at"], fields["last_error"],
+                 fields["models"]))
         c.commit()
     finally:
         c.close()
     return aid
+
+
+def _models_json(v):
+    """模型清单统一存成 JSON 数组字符串。"""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return v if v.strip().startswith("[") else json.dumps([v], ensure_ascii=False)
+    try:
+        return json.dumps([str(x) for x in (v or [])], ensure_ascii=False)
+    except Exception:
+        return "[]"
+
+
+def account_models(rec):
+    """从 accounts 行里取出模型列表；坏数据当作空（= 不限制）。"""
+    raw = rec.get("models") if isinstance(rec, dict) else rec
+    if not raw:
+        return []
+    try:
+        v = json.loads(raw) if isinstance(raw, str) else raw
+        return [str(x) for x in v] if isinstance(v, list) else []
+    except Exception:
+        return []
 
 
 def list_accounts(enabled_only=False):

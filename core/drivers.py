@@ -166,6 +166,22 @@ def fetch_relay(cred, days):
     except Exception as e:
         return _fail(e)
 
+    # 可用模型清单（OpenAI 兼容 /v1/models）：这是中转站唯一可靠的「我到底能用哪些模型」
+    # 来源，拉不到不影响余额与用量，只是模型选择里少一份候选。
+    try:
+        ml = _get(base + "/v1/models", h)
+        items = ml.get("data") or ml.get("models") or []
+        ids = []
+        for x in items if isinstance(items, list) else []:
+            mid = x.get("id") if isinstance(x, dict) else x
+            s = str(mid or "").strip()
+            if s and s not in ids:
+                ids.append(s)
+        if ids:
+            out["model_list"] = ids[:600]
+    except Exception:
+        pass
+
     # 逐条日志：能拿到就按天 / 按模型聚合，拿不到就如实只报累计
     try:
         import datetime
@@ -262,6 +278,8 @@ DRIVERS = {
             {"key": "api_key", "label": "API Key（查余额）", "hint": "可留空，余额需 API Key", "optional": True},
         ],
         "note": "控制台给逐日逐模型用量；余额走公开 API /user/balance。",
+        # 在官网控制台按 F12 → Console 粘贴这行，值会直接进剪贴板
+        "grab": "copy(JSON.parse(localStorage.getItem('userToken')).value)",
     },
     "kimi": {
         "label": "Kimi", "color": "#8a8f98", "capability": "detail",
@@ -269,6 +287,7 @@ DRIVERS = {
         "site": "https://platform.kimi.com",
         "auth": [{"key": "refresh_token", "label": "refresh_token", "hint": "控制台登录态里的长期票据"}],
         "note": "票据只有 15 分钟有效期，会自动续期并落盘。",
+        "grab": "copy(localStorage.getItem('refresh_token')||(document.cookie.match(/refresh_token=([^;]+)/)||[])[1]||'未找到')",
     },
     "zhipu": {
         "label": "智谱 GLM", "color": "#3b6ef5", "capability": "detail",
@@ -276,6 +295,7 @@ DRIVERS = {
         "site": "https://bigmodel.cn",
         "auth": [{"key": "jwt_token", "label": "bigmodel_token_production", "hint": "登录后的 cookie 值"}],
         "note": "用量取费用账单的实扣金额，余额取客户账户报表。",
+        "grab": "copy((document.cookie.match(/bigmodel_token_production=([^;]+)/)||[])[1]||'未找到')",
     },
     "openrouter": {
         "label": "OpenRouter", "color": "#6467f2", "capability": "balance_only",
@@ -354,7 +374,7 @@ def public_list():
             "id": k, "label": d["label"], "color": d["color"],
             "capability": d["capability"], "login_url": d.get("login_url", ""),
             "site": d.get("site", ""), "auth": d.get("auth", []),
-            "note": d.get("note", ""),
+            "note": d.get("note", ""), "grab": d.get("grab", ""),
         })
     order = {"detail": 0, "balance_only": 1, "catalog": 2}
     out.sort(key=lambda x: (order.get(x["capability"], 3), x["label"]))

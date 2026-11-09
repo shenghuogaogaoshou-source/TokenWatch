@@ -232,7 +232,7 @@ def account_providers():
             "kind": DRIVER_LEGACY_KIND.get(drv, drv),
             "driver": drv,
             "capability": a.get("capability") or d.get("capability") or "catalog",
-            "models": [],
+            "models": local_store.account_models(a),
             "_acct": True,
             # 凭据键：三家沿用旧键，其余按账户 id（同一平台可接多个账号）
             "_cred_key": drv if drv in LEGACY_DRIVERS else a["id"],
@@ -2449,6 +2449,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if path == "/api/accounts":
             return self._account_write(payload)
+        if path == "/api/account_models":
+            return self._account_models(payload)
         if path == "/api/account_test":
             return self._account_test(payload)
         if path == "/api/platform_creds":
@@ -2584,9 +2586,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "id": aid, "driver": driver, "label": label, "base_url": base_url,
             "capability": d.get("capability") or "detail",
             "sort_index": int(payload.get("sort_index") or 100),
+            # 只在请求真的带了 models 时才写，否则保留原有清单
+            "models": payload.get("models") if "models" in payload else None,
         })
         self._invalidate()
         return self._json({"ok": True, "id": aid})
+
+    def _account_models(self, payload):
+        """设置「这个账户开放哪些模型」。空数组 = 不限制（默认）。"""
+        aid = str(payload.get("id") or "").strip()
+        if not aid:
+            return self._json({"ok": False, "error": "缺少账户 id"})
+        rec = local_store.get_account(aid)
+        if not rec:
+            return self._json({"ok": False, "error": "账户不存在"})
+        raw = payload.get("models")
+        if not isinstance(raw, list):
+            return self._json({"ok": False, "error": "models 必须是数组"})
+        clean = []
+        for x in raw:
+            s = str(x or "").strip()
+            if s and s not in clean:
+                clean.append(s[:120])
+        clean = clean[:600]
+        rec["models"] = clean
+        local_store.upsert_account(rec)
+        return self._json({"ok": True, "id": aid, "models": clean})
 
     def _account_test(self, payload):
         driver = str(payload.get("driver") or "").strip()

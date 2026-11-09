@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TokenWatch · 图标方向</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:1360px;background:#EDE4D2;font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+    color:#221B10;padding:34px 40px 30px;
+  }
+  .top{display:flex;align-items:baseline;gap:16px;border-bottom:1.5px solid #221B10;padding-bottom:14px}
+  .top h1{font-family:Georgia,"Times New Roman","Songti SC",serif;font-size:26px;font-weight:600}
+  .top p{font-size:12.5px;color:#6A5F4C}
+  .top .r{margin-left:auto;font-size:11px;color:#9A8C74;letter-spacing:.06em}
+
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:0}
+  .col{padding:24px 30px 0 0;border-right:1px solid #D3C5A9}
+  .col:last-child{border-right:0;padding-right:0}
+  .col + .col{padding-left:30px}
+
+  .lbl{display:flex;align-items:baseline;gap:8px;margin-bottom:16px}
+  .lbl b{font-size:11px;letter-spacing:.16em;text-transform:uppercase;font-weight:600}
+  .lbl span{font-family:Georgia,"Times New Roman",serif;font-size:12px;color:#9A8C74}
+
+  .big{display:flex;align-items:flex-end;gap:14px;margin-bottom:20px}
+  .tile{
+    display:flex;align-items:center;justify-content:center;
+    background:#F8F3E6;border-radius:22.5%;box-shadow:0 1px 0 rgba(0,0,0,.06);
+  }
+  .tile.ink{background:#23201A}
+
+  .sizes{display:flex;align-items:center;gap:16px;padding:14px 0 16px;border-top:1px solid #D3C5A9;border-bottom:1px solid #D3C5A9}
+  .s{display:flex;flex-direction:column;align-items:center;gap:7px}
+  .s small{font-size:9.5px;color:#9A8C74;letter-spacing:.08em}
+
+  .why{font-size:12.5px;color:#6A5F4C;line-height:1.75;padding-top:14px}
+  .why b{color:#221B10;font-weight:500}
+  .why em{font-style:normal;color:#963A2B}
+
+  .foot{margin-top:26px;padding-top:14px;border-top:1.5px solid #221B10;display:flex;gap:26px;font-size:11.5px;color:#6A5F4C}
+  .foot b{color:#221B10;font-weight:500}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>图标 · 三个方向</h1>
+  <p>同一套纸色与墨线，三种符号来源</p>
+  <div class="r">256 / 48 / 24 实际像素</div>
+</div>
+
+<div class="grid">
+
+  <!-- A 印章 -->
+  <div class="col">
+    <div class="lbl"><b>A · 印章</b><span>seal</span></div>
+    <div class="big">
+      <div class="tile" style="width:212px;height:212px">
+        <svg width="212" height="212" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="79" fill="none" stroke="#963A2B" stroke-width="13"/>
+          <line x1="104" y1="110" x2="152" y2="110" stroke="#963A2B" stroke-width="9"/>
+          <line x1="104" y1="128" x2="152" y2="128" stroke="#963A2B" stroke-width="9"/>
+          <line x1="104" y1="146" x2="134" y2="146" stroke="#963A2B" stroke-width="9"/>
+        </svg>
+      </div>
+    </div>
+    <div class="sizes">
+      <div class="s"><div class="tile" style="width:48px;height:48px">
+        <svg width="48" height="48" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="79" fill="none" stroke="#963A2B" stroke-width="14"/>
+          <line x1="102" y1="108" x2="154" y2="108" stroke="#963A2B" stroke-width="11"/>
+          <line x1="102" y1="129" x2="154" y2="129" stroke="#963A2B" stroke-width="11"/>
+          <line x1="102" y1="150" x2="134" y2="150" stroke="#963A2B" stroke-width="11"/>
+        </svg></div><small>48</small></div>
+      <div class="s"><div class="tile ink" style="width:48px;height:48px">
+        <svg width="48" height="48" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="79" fill="none" stroke="#E4B79A" stroke-width="14"/>
+          <line x1="102" y1="108" x2="154" y2="108" stroke="#E4B79A" stroke-width="11"/>
+          <line x1="102" y1="129" x2="154" y2="129" stroke="#E4B79A" stroke-width="11"/>
+          <line x1="102" y1="150" x2="134" y2="150" stroke="#E4B79A" stroke-width="11"/>
+        </svg></div><small>深底</small></div>
+      <div class="s"><div class="tile" style="width:24px;height:24px">
+        <svg width="24" height="24" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="86" fill="none" stroke="#963A2B" stroke-width="26"/>
+          <rect x="106" y="106" width="44" height="44" fill="#963A2B"/>
+        </svg></div><small>24</small></div>
+      <div class="s"><div class="tile ink" style="width:24px;height:24px">
+        <svg width="24" height="24" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="86" fill="none" stroke="#E4B79A" stroke-width="26"/>
+          <rect x="106" y="106" width="44" height="44" fill="#E4B79A"/>
+        </svg></div><small>深底</small></div>
+    </div>
+    <p class="why">旧账本上的<em>验收章</em>：一圈粗红圈住三行账目，最后一行短一截。24px 收成「外环 + 中间实心」，缩到任务栏还是个清楚的圆点，不糊。</p>
+  </div>
+
+  <!-- B 刻度环 -->
+  <div class="col">
+    <div class="lbl"><b>B · 刻度环</b><span>gauge</span></div>
+    <div class="big">
+      <div class="tile" style="width:212px;height:212px">
+        <svg width="212" height="212" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="88" fill="none" stroke="#221B10" stroke-width="15"
+                  stroke-dasharray="431 122" stroke-linecap="butt" transform="rotate(-64 128 128)"/>
+          <circle cx="128" cy="128" r="15" fill="#A05A26"/>
+        </svg>
+      </div>
+    </div>
+    <div class="sizes">
+      <div class="s"><div class="tile" style="width:48px;height:48px">
+        <svg width="48" height="48" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="88" fill="none" stroke="#221B10" stroke-width="16"
+                  stroke-dasharray="431 122" transform="rotate(-64 128 128)"/>
+          <circle cx="128" cy="128" r="17" fill="#A05A26"/>
+        </svg></div><small>48</small></div>
+      <div class="s"><div class="tile ink" style="width:48px;height:48px">
+        <svg width="48" height="48" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="88" fill="none" stroke="#F1E6D2" stroke-width="16"
+                  stroke-dasharray="431 122" transform="rotate(-64 128 128)"/>
+          <circle cx="128" cy="128" r="17" fill="#D89A66"/>
+        </svg></div><small>深底</small></div>
+      <div class="s"><div class="tile" style="width:24px;height:24px">
+        <svg width="24" height="24" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="84" fill="none" stroke="#221B10" stroke-width="28"
+                  stroke-dasharray="400 130" transform="rotate(-64 128 128)"/>
+          <circle cx="128" cy="128" r="20" fill="#A05A26"/>
+        </svg></div><small>24</small></div>
+      <div class="s"><div class="tile ink" style="width:24px;height:24px">
+        <svg width="24" height="24" viewBox="0 0 256 256">
+          <circle cx="128" cy="128" r="84" fill="none" stroke="#F1E6D2" stroke-width="28"
+                  stroke-dasharray="400 130" transform="rotate(-64 128 128)"/>
+          <circle cx="128" cy="128" r="20" fill="#D89A66"/>
+        </svg></div><small>深底</small></div>
+    </div>
+    <p class="why">用量表盘，<b>缺口在右上</b>像指针未归零。最贴「监控」这件事，但风险是<b>像刷新图标</b>——放到浏览器标签上会跟 loading 混淆。</p>
+  </div>
+
+  <!-- C 账页 -->
+  <div class="col">
+    <div class="lbl"><b>C · 账页</b><span>ledger</span></div>
+    <div class="big">
+      <div class="tile" style="width:212px;height:212px">
+        <svg width="212" height="212" viewBox="0 0 256 256">
+          <path d="M62 44 H168 L198 74 V212 H62 Z" fill="#FFFCF4" stroke="#221B10" stroke-width="11" stroke-linejoin="miter"/>
+          <path d="M168 44 V74 H198" fill="none" stroke="#221B10" stroke-width="11"/>
+          <line x1="92" y1="112" x2="168" y2="112" stroke="#221B10" stroke-width="8"/>
+          <line x1="92" y1="142" x2="168" y2="142" stroke="#221B10" stroke-width="8"/>
+          <line x1="92" y1="172" x2="140" y2="172" stroke="#A05A26" stroke-width="8"/>
+        </svg>
+      </div>
+    </div>
+    <div class="sizes">
+      <div class="s"><div class="tile" style="width:48px;height:48px">
+        <svg width="48" height="48" viewBox="0 0 256 256">
+          <path d="M62 44 H168 L198 74 V212 H62 Z" fill="#FFFCF4" stroke="#221B10" stroke-width="12"/>
+          <path d="M168 44 V74 H198" fill="none" stroke="#221B10" stroke-width="12"/>
+          <line x1="92" y1="110" x2="166" y2="110" stroke="#221B10" stroke-width="9"/>
+          <line x1="92" y1="150" x2="166" y2="150" stroke="#221B10" stroke-width="9"/>
+          <line x1="92" y1="190" x2="138" y2="190" stroke="#A05A26" stroke-width="9"/>
+        </svg></div><small>48</small></div>
+      <div class="s"><div class="tile ink" style="width:48px;height:48px">
+        <svg width="48" height="48" viewBox="0 0 256 256">
+          <path d="M62 44 H168 L198 74 V212 H62 Z" fill="none" stroke="#F1E6D2" stroke-width="12"/>
+          <line x1="92" y1="110" x2="166" y2="110" stroke="#F1E6D2" stroke-width="9"/>
+          <line x1="92" y1="150" x2="166" y2="150" stroke="#F1E6D2" stroke-width="9"/>
+          <line x1="92" y1="190" x2="138" y2="190" stroke="#D89A66" stroke-width="9"/>
+        </svg></div><small>深底</small></div>
+      <div class="s"><div class="tile" style="width:24px;height:24px">
+        <svg width="24" height="24" viewBox="0 0 256 256">
+          <path d="M58 40 H170 L202 72 V216 H58 Z" fill="#FFFCF4" stroke="#221B10" stroke-width="24"/>
+          <line x1="92" y1="120" x2="168" y2="120" stroke="#221B10" stroke-width="18"/>
+          <line x1="92" y1="172" x2="168" y2="172" stroke="#A05A26" stroke-width="18"/>
+        </svg></div><small>24</small></div>
+      <div class="s"><div class="tile ink" style="width:24px;height:24px">
+        <svg width="24" height="24" viewBox="0 0 256 256">
+          <path d="M58 40 H170 L202 72 V216 H58 Z" fill="none" stroke="#F1E6D2" stroke-width="24"/>
+          <line x1="92" y1="120" x2="168" y2="120" stroke="#F1E6D2" stroke-width="18"/>
+          <line x1="92" y1="172" x2="168" y2="172" stroke="#D89A66" stroke-width="18"/>
+        </svg></div><small>深底</small></div>
+    </div>
+    <p class="why">一张折角的账单，最后一行<em>用琥珀色收尾</em>。意思最直白，但<b>24px 下折角会糊成缺口</b>，需要单独做一张简化版。</p>
+  </div>
+
+</div>
+
+<div class="foot">
+  <span><b>共同约束</b>：圆角 22.5%（Windows 应用图标习惯）、无渐变、无投影、无文字。</span>
+  <span><b>小尺寸</b>：48 与 24 是单独画的，不是缩图。</span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TokenWatch · 眼睛骨架优化方向</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#F8F3E6;color:#221B10;
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    padding:38px 40px 46px;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1{font-family:Georgia,"Songti SC",serif;font-size:24px;font-weight:400;letter-spacing:-.01em}
+  .sub{font-size:12px;color:#6A5F4C;margin-top:7px;line-height:1.7}
+  .wrap{margin-top:26px;border-top:1.5px solid #221B10}
+  .v{
+    display:grid;grid-template-columns:210px 1fr;gap:26px;
+    padding:22px 0 24px;border-bottom:1px solid #E2D5BB;align-items:start;
+  }
+  .v .meta .code{font-family:Georgia,serif;font-size:11px;letter-spacing:.16em;color:#9A8C74}
+  .v .meta .nm{font-size:15px;font-weight:600;margin-top:4px}
+  .v .meta .ds{font-size:11.5px;color:#6A5F4C;line-height:1.75;margin-top:7px}
+  .v .meta .tag{display:inline-block;margin-top:9px;font-size:10px;letter-spacing:.08em;
+    padding:2px 7px;border:1px solid #C9B896;color:#6A5F4C}
+  .stage{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .grp{display:flex;flex-direction:column;gap:9px}
+  .grp .lb{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#9A8C74}
+  .row{display:flex;gap:12px;align-items:flex-end}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:5px}
+  .cell small{font-size:9px;color:#9A8C74;letter-spacing:.06em}
+  .pad{padding:9px;border-radius:4px}
+  .pad.d{background:#141414}
+  .pad.l{background:#FFFDF7;border:1px solid #E2D5BB}
+  .tile{border-radius:22.5%;overflow:hidden;display:block}
+  .tile svg{display:block}
+  footer{margin-top:22px;font-size:11.5px;color:#6A5F4C;line-height:1.9}
+  footer b{color:#221B10}
+</style>
+</head>
+<body>
+<h1>在「眼睛」骨架上做七档优化</h1>
+<p class="sub">同一套骨架（外环外径固定 60%、内环 73%、瞳孔 10.4%、正上方缺口），只改配色、环粗细、缺口角度与形状。每档都给 256 / 64 / 32 / 16 四层——任务栏真正生效的是后两档。</p>
+
+<div class="wrap" id="wrap"></div>
+
+<footer>
+  <b>看什么：</b>先看 32px 和 16px 两格。256px 谁都能好看，小到 32px 还能认出「一圈、一点、一个缺口」的，才站得住。
+</footer>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const PAD = 51.25, W = 15.5, R = 276/4;        // 环中线半径（256 空间）
+const C = 2 * Math.PI * R;
+
+const V = {
+  a0: {
+    code:'A0', nm:'现状 · 蓝渐变', tag:'基准',
+    ds:'青→蓝对角渐变，内环 38% 透明，12 根刻度，薄荷瞳孔。',
+    tile:['#171E30','#090C14'], tileRot:90,
+    ring:['#2ED3E8','#5B7CFA'], ringRot:[0,0,256,256],
+    inner:'rgba(120,150,255,.38)', innerW:2.75,
+    tick:'rgba(205,220,255,.45)', ticks:'all',
+    pupil:['#FFFFFF','#2ED3E8'], pr:13.25, dy:0
+  },
+  a1: {
+    code:'A1', nm:'蓝 · 减笔', tag:'改动最小',
+    ds:'颜色一点不动，只删刻度、删内环、环加粗到 18%，瞳孔从渐变改成纯白。',
+    tile:['#171E30','#090C14'], tileRot:90,
+    ring:['#2ED3E8','#5B7CFA'], ringRot:[0,0,256,256],
+    inner:null, innerW:0,
+    tick:null, ticks:'none',
+    pupil:'#EAFBFF', pr:15, dy:0
+  },
+  a2: {
+    code:'A2', nm:'暖 · 铜环', tag:'跟界面同源',
+    ds:'琥珀→赭红对角渐变，暖墨底，纸色瞳孔，只留 4 根正方向刻度。',
+    tile:['#261E15','#100C08'], tileRot:90,
+    ring:['#E0A252','#9A4A22'], ringRot:[0,0,256,256],
+    inner:'rgba(224,162,82,.26)', innerW:2.5,
+    tick:'rgba(224,162,82,.42)', ticks:'cardinal',
+    pupil:['#FBF5E7','#E6D4B4'], pr:14, dy:0
+  },
+  a3: {
+    code:'A3', nm:'暖 · 真眼', tag:'形状改动',
+    ds:'环压成横椭圆当眼眶，缺口移到右上像上眼睑，瞳孔上移一点并加高光。',
+    tile:['#1E1913','#0E0B08'], tileRot:90,
+    ellipse:[73,61], gapShift:-16,
+    ring:['#D9A05B','#B0562C'], ringRot:[0,0,256,256],
+    inner:null, innerW:0,
+    tick:null, ticks:'none',
+    pupil:'#FBF5E7', pr:13, dy:-6, glint:true
+  },
+  a5: {
+    code:'A1b', nm:'蓝 · 细环小瞳', tag:'小尺寸实验',
+    ds:'环 15.5→13，瞳孔 13.25→11.5，缺口 28°→34°。让 16/24px 时环与点之间留出「眼白」。',
+    tile:['#171E30','#090C14'], tileRot:90,
+    ring:['#2ED3E8','#5B7CFA'], ringRot:[0,0,256,256], w:13, gap:34,
+    inner:null, innerW:0,
+    tick:null, ticks:'none',
+    pupil:'#EAFBFF', pr:11.5, dy:0
+  },
+  a6: {
+    code:'A2b', nm:'铜 · 细环小瞳', tag:'小尺寸实验',
+    ds:'同 A2 的暖色，但同样收细环、缩小瞳孔、放大缺口——验证是不是暖色也能在小尺寸立住。',
+    tile:['#261E15','#100C08'], tileRot:90,
+    ring:['#E0A252','#9A4A22'], ringRot:[0,0,256,256], w:13, gap:34,
+    inner:null, innerW:0,
+    tick:null, ticks:'none',
+    pupil:['#FBF5E7','#E6D4B4'], pr:11.5, dy:0
+  },
+  a4: {
+    code:'A4', nm:'纸底 · 墨环', tag:'浅色主题版',
+    ds:'纸底 + 墨黑环 + 赭红瞳孔。留给浅色界面和浅色任务栏，深色下会偏弱。',
+    tile:'#F8F3E6',
+    ring:'#221B10', ringRot:null,
+    inner:'rgba(34,27,16,.20)', innerW:2.5,
+    tick:null, ticks:'none',
+    pupil:'#963A2B', pr:13.5, dy:0
+  }
+};
+
+function svg(id, size){
+  const v = V[id];
+  const u = 'g' + id + size;
+  const w = v.w || W;
+  const gapDeg = v.gap || 28;
+  const Rm = 76.75 - w/2;                        // 外径固定，环粗变化时中线内收
+  const rx = v.ellipse ? v.ellipse[0] : Rm;
+  const ry = v.ellipse ? v.ellipse[1] : Rm;
+  const per = Math.PI * (rx + ry) * (1 + 3*Math.pow((rx-ry)/(rx+ry),2) / (10 + Math.sqrt(4 - 3*Math.pow((rx-ry)/(rx+ry),2))));
+  const arc = per * (360-gapDeg)/360, gapLen = per * gapDeg/360;
+  const startRot = 270 + gapDeg/2 + (v.gapShift || 0);
+
+  let defs = '', tileFill = v.tile;
+  if (Array.isArray(v.tile)) {
+    defs += `<linearGradient id="${u}t" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${v.tile[0]}"/><stop offset="1" stop-color="${v.tile[1]}"/></linearGradient>`;
+    tileFill = `url(#${u}t)`;
+  }
+  const ringFill = Array.isArray(v.ring) ? `url(#${u}r)` : v.ring;
+  if (Array.isArray(v.ring)) {
+    defs += `<linearGradient id="${u}r" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${v.ring[0]}"/><stop offset="1" stop-color="${v.ring[1]}"/></linearGradient>`;
+  }
+  let pupilFill = v.pupil;
+  if (Array.isArray(v.pupil)) {
+    defs += `<linearGradient id="${u}p" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${v.pupil[0]}"/><stop offset="1" stop-color="${v.pupil[1]}"/></linearGradient>`;
+    pupilFill = `url(#${u}p)`;
+  }
+
+  let ticks = '';
+  if (v.ticks !== 'none') {
+    const angs = v.ticks === 'cardinal' ? [0,90,180] : [0,30,60,120,150,180,210,240,300,330];
+    ticks = angs.map(a => {
+      const rad = a * Math.PI/180, ri = 90, ro = 101.75;
+      return `<line x1="${128+ri*Math.cos(rad)}" y1="${128+ri*Math.sin(rad)}"
+        x2="${128+ro*Math.cos(rad)}" y2="${128+ro*Math.sin(rad)}"
+        stroke="${v.tick}" stroke-width="2.3" stroke-linecap="butt"/>`;
+    }).join('');
+  }
+
+  const inner = v.inner ? `<ellipse cx="128" cy="128" rx="${R*0.674}" ry="${R*0.674}"
+      fill="none" stroke="${v.inner}" stroke-width="${v.innerW}"/>` : '';
+
+  const glint = v.glint ? `<circle cx="${128-4.4}" cy="${128+(v.dy||0)-4.4}" r="3.1" fill="#FFFDF5" opacity=".85"/>` : '';
+
+  return `<svg width="${size}" height="${size}" viewBox="0 0 256 256">
+    <defs>${defs}</defs>
+    <rect width="256" height="256" rx="57.6" fill="${tileFill}"/>
+    ${ticks}${inner}
+    <ellipse cx="128" cy="128" rx="${rx}" ry="${ry}" fill="none"
+      stroke="${ringFill}" stroke-width="${w}"
+      stroke-dasharray="${arc.toFixed(2)} ${gapLen.toFixed(2)}"
+      transform="rotate(${startRot} 128 128)"/>
+    <circle cx="128" cy="${128+(v.dy||0)}" r="${v.pr}" fill="${pupilFill}"/>
+    ${glint}
+  </svg>`;
+}
+
+const sizes = [256, 64, 32, 16];
+const ORDER = ['a0','a1','a5','a2','a6','a3','a4'];
+document.getElementById('wrap').innerHTML = ORDER.map(id => {
+  const v = V[id];
+  const mk = (cls) => sizes.map(s =>
+    `<div class="cell"><div class="pad ${cls}"><div class="tile">${svg(id, s)}</div></div><small>${s}</small></div>`
+  ).join('');
+  return `<div class="v">
+    <div class="meta">
+      <div class="code">${v.code}</div>
+      <div class="nm">${v.nm}</div>
+      <div class="ds">${v.ds}</div>
+      <div class="tag">${v.tag}</div>
+    </div>
+    <div class="stage">
+      <div class="grp"><div class="lb">深底</div><div class="row">${mk('d')}</div></div>
+      <div class="grp"><div class="lb">浅底</div><div class="row">${mk('l')}</div></div>
+    </div>
+  </div>`;
+}).join('');
+</script>
+</body>
+</html>

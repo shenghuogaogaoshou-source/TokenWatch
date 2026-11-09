@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TokenWatch · 账本版样张</title>
+<style>
+  :root{
+    --paper:#F8F3E6;
+    --card:#FDFAF2;
+    --card-2:#FBF6EA;
+    --ink:#221B10;
+    --ink-2:#6A5F4C;
+    --ink-3:#9A8C74;
+    --line:#E8DFCC;
+    --line-2:#D3C5A9;
+    --amber:#A05A26;
+    --amber-soft:#EBD9BE;
+    --olive:#4C6A3B;
+    --brick:#963A2B;
+    --serif:Georgia,"Times New Roman","Songti SC",serif;
+    --sans:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:#D9D2C4}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased}
+
+  .board{
+    width:1440px;height:960px;background:var(--paper);
+    display:flex;overflow:hidden;position:relative;
+    margin:0 auto 40px;
+    box-shadow:0 1px 0 rgba(0,0,0,.14);
+  }
+  .board + .board{margin-top:0}
+
+  /* ---------- 左栏 ---------- */
+  .rail{
+    width:196px;flex:0 0 196px;border-right:1px solid var(--line);
+    background:var(--card-2);padding:26px 0 20px;display:flex;flex-direction:column;
+  }
+  .mark{display:flex;align-items:center;gap:10px;padding:0 22px 24px}
+  .mark i{
+    width:22px;height:22px;border:2px solid var(--ink);border-radius:50%;
+    position:relative;display:block;
+  }
+  .mark i::after{
+    content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;
+    background:var(--amber);border-radius:50%;transform:translate(-50%,-50%);
+  }
+  .mark b{font-family:var(--serif);font-size:15px;letter-spacing:.01em;font-weight:600}
+  .mark small{display:block;font-size:9px;letter-spacing:.16em;color:var(--ink-3);text-transform:uppercase;margin-top:2px}
+  .nav{padding:0 12px}
+  .nav a{
+    display:flex;align-items:center;gap:9px;padding:9px 10px;color:var(--ink-2);
+    font-size:13px;text-decoration:none;border-radius:3px;
+  }
+  .nav a .dot{width:4px;height:4px;border-radius:50%;background:var(--line-2)}
+  .nav a.on{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+  .nav a.on .dot{background:var(--amber)}
+  .rail-foot{margin-top:auto;padding:16px 22px 0;border-top:1px solid var(--line);font-size:11px;color:var(--ink-3);line-height:1.9}
+  .rail-foot b{font-family:var(--serif);font-size:15px;color:var(--ink);font-weight:600}
+
+  /* ---------- 主区 ---------- */
+  main{flex:1;padding:30px 40px 0;overflow:hidden;display:flex;flex-direction:column}
+
+  .head{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}
+  .head h1{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:-.01em;line-height:1.1}
+  .head p{color:var(--ink-2);font-size:13px;margin-top:7px;max-width:520px;line-height:1.6}
+  .head-r{display:flex;gap:8px;align-items:center}
+
+  .btn{
+    font-family:var(--sans);font-size:12.5px;padding:8px 15px;border-radius:3px;
+    border:1px solid var(--line-2);background:var(--card);color:var(--ink);cursor:pointer;
+  }
+  .btn.solid{background:var(--ink);color:var(--card);border-color:var(--ink)}
+  .btn.amber{background:var(--amber);border-color:var(--amber);color:#fff}
+
+  /* 三步 */
+  .steps{display:flex;align-items:center;gap:0;margin-top:22px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .step{
+    flex:1;display:flex;align-items:baseline;gap:9px;padding:11px 14px 11px 0;
+    font-size:12.5px;color:var(--ink-3);border-right:1px solid var(--line);
+  }
+  .step:last-child{border-right:0}
+  .step b{
+    font-family:var(--serif);font-size:12px;font-weight:400;width:18px;height:18px;
+    border:1px solid var(--line-2);border-radius:50%;display:inline-flex;
+    align-items:center;justify-content:center;color:var(--ink-3);flex:0 0 18px;
+  }
+  .step.on{color:var(--ink)}
+  .step.on b{background:var(--ink);border-color:var(--ink);color:var(--card)}
+  .step.done{color:var(--ink-2)}
+  .step.done b{background:var(--amber-soft);border-color:var(--amber);color:var(--amber)}
+  .step small{margin-left:auto;font-size:10px;letter-spacing:.1em;color:var(--ink-3);text-transform:uppercase}
+
+  /* 两栏 */
+  .two{display:grid;grid-template-columns:1fr 356px;gap:34px;flex:1;min-height:0;padding-top:18px}
+
+  /* 选择列表 */
+  .pick{min-height:0;display:flex;flex-direction:column}
+  .searchbar{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+  .search{
+    flex:1;display:flex;align-items:center;gap:8px;background:var(--card);
+    border:1px solid var(--line);border-radius:3px;padding:8px 11px;
+  }
+  .search input{border:0;background:transparent;font-family:var(--sans);font-size:12.5px;color:var(--ink);width:100%;outline:none}
+  .search input::placeholder{color:var(--ink-3)}
+  .search .k{font-family:var(--serif);font-size:11px;color:var(--ink-3);border:1px solid var(--line);border-radius:2px;padding:1px 5px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+  .chip{
+    font-size:11.5px;padding:4px 9px;border:1px solid var(--line);border-radius:2px;
+    color:var(--ink-2);background:transparent;
+  }
+  .chip.on{background:var(--ink);border-color:var(--ink);color:var(--card)}
+
+  .list{overflow:hidden;flex:1;border-top:1px solid var(--line-2);
+    -webkit-mask-image:linear-gradient(to bottom,#000 94%,rgba(0,0,0,0));}
+  .g-head{
+    display:flex;align-items:baseline;gap:9px;padding:10px 2px 7px;
+    border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--paper);
+  }
+  .g-head span.v{font-family:var(--serif);font-size:13px;font-weight:600}
+  .g-head span.n{font-size:10.5px;color:var(--ink-3);letter-spacing:.06em}
+  .g-head span.c{margin-left:auto;font-size:10.5px;color:var(--ink-3)}
+
+  .row{
+    display:grid;grid-template-columns:22px 1fr 76px 92px 92px;align-items:center;
+    gap:10px;padding:9px 2px;border-bottom:1px solid var(--line);cursor:default;
+  }
+  .row:hover{background:var(--card-2)}
+  .row .cb{
+    width:14px;height:14px;border:1px solid var(--line-2);border-radius:2px;
+    position:relative;background:var(--card);
+  }
+  .row .cb.on{background:var(--amber);border-color:var(--amber)}
+  .row .cb.on::after{
+    content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:7.5px;
+    border-right:1.5px solid #fff;border-bottom:1.5px solid #fff;transform:rotate(42deg);
+  }
+  .row .nm{font-size:13px;line-height:1.3}
+  .row .nm small{display:block;font-size:10.5px;color:var(--ink-3);margin-top:2px;letter-spacing:.02em}
+  .num{font-family:var(--serif);font-size:13px;color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums}
+  .num b{color:var(--ink);font-weight:400}
+  .num small{display:block;font-size:9.5px;color:var(--ink-3);font-family:var(--sans);letter-spacing:.08em;margin-top:2px;text-transform:uppercase}
+  .row .picked{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px}
+
+  /* 右侧已选 */
+  .side{
+    border-left:1px solid var(--line);padding-left:26px;display:flex;flex-direction:column;min-height:0;
+  }
+  .side-h{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:9px;border-bottom:1.5px solid var(--ink)}
+  .side-h b{font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:600}
+  .side-h span{font-family:var(--serif);font-size:13px;color:var(--ink-2)}
+  .picks{flex:1;overflow:hidden;padding-top:2px}
+  .pick-item{padding:12px 0;border-bottom:1px solid var(--line)}
+  .pick-item .t{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .pick-item .t b{font-family:var(--serif);font-size:14px;font-weight:600;letter-spacing:.01em}
+  .pick-item .t i{font-style:normal;font-size:10.5px;color:var(--ink-3);letter-spacing:.05em}
+  .pick-item .src{display:flex;align-items:center;gap:7px;margin-top:8px;font-size:11.5px;color:var(--ink-2)}
+  .pick-item .src .r{
+    width:11px;height:11px;border:1px solid var(--line-2);border-radius:50%;flex:0 0 11px;position:relative;
+  }
+  .pick-item .src .r.on{border-color:var(--amber)}
+  .pick-item .src .r.on::after{
+    content:"";position:absolute;inset:2.5px;background:var(--amber);border-radius:50%;
+  }
+  .pick-item .src em{font-style:normal;margin-left:auto;font-family:var(--serif);font-variant-numeric:tabular-nums;font-size:12px}
+  .pick-item .src em.save{color:var(--olive)}
+  .side-cta{border-top:1px solid var(--line-2);padding-top:14px;margin-top:14px}
+  .side-cta .btn{width:100%;text-align:center;padding:11px}
+  .side-cta p{font-size:11px;color:var(--ink-3);margin-top:9px;line-height:1.6}
+  .side-cta p b{color:var(--ink-2);font-weight:500}
+
+  /* ---------- 详情页 ---------- */
+  .crumb{font-size:11.5px;color:var(--ink-3);letter-spacing:.03em;margin-bottom:14px}
+  .crumb b{color:var(--ink-2);font-weight:400}
+  .acct-head{display:flex;align-items:center;gap:14px;padding-bottom:16px;border-bottom:1.5px solid var(--ink)}
+  .acct-head h1{font-family:var(--serif);font-size:32px;font-weight:600;letter-spacing:-.01em}
+  .tag{
+    font-size:10.5px;letter-spacing:.1em;padding:3px 8px;border:1px solid var(--line-2);
+    border-radius:2px;color:var(--ink-2);text-transform:uppercase;
+  }
+  .tag.ok{color:var(--olive);border-color:var(--olive)}
+  .acct-head .sp{margin-left:auto;display:flex;gap:8px}
+
+  .figures{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;border-bottom:1px solid var(--line)}
+  .fig{padding:20px 20px 18px 0;border-right:1px solid var(--line)}
+  .fig:last-child{border-right:0}
+  .fig .k{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  .fig .v{
+    font-family:var(--serif);font-size:40px;font-weight:400;letter-spacing:-.01em;
+    line-height:1.05;margin-top:8px;font-variant-numeric:tabular-nums;
+    display:flex;align-items:baseline;gap:4px;
+  }
+  .fig .v.big{font-size:44px}
+  .fig .v .cur{font-size:22px;color:var(--ink-2)}
+  .fig .v .u{font-size:17px;color:var(--ink-2);margin-left:2px}
+  .fig .n{font-size:11.5px;color:var(--ink-3);margin-top:7px;line-height:1.5}
+
+  .panels{display:grid;grid-template-columns:1fr 380px;gap:34px;padding-top:20px;flex:1;min-height:0}
+  .p-h{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:8px;border-bottom:1px solid var(--line-2)}
+  .p-h b{font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:600}
+  .p-h a{font-size:11.5px;color:var(--amber);text-decoration:none}
+  .p-h span{font-size:11px;color:var(--ink-3)}
+
+  table{width:100%;border-collapse:collapse}
+  th{
+    text-align:left;font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:600;padding:9px 0;border-bottom:1px solid var(--line);
+  }
+  th.r,td.r{text-align:right}
+  td{padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+  td.m{font-family:var(--serif);font-size:13.5px}
+  td.m small{display:block;font-family:var(--sans);font-size:10px;color:var(--ink-3);margin-top:2px;letter-spacing:.02em}
+  td.n{font-family:var(--serif);font-variant-numeric:tabular-nums;color:var(--ink-2);text-align:right}
+  td.n b{font-weight:400;color:var(--ink)}
+
+  .cred{display:flex;flex-direction:column;gap:0}
+  .kv{display:flex;align-items:baseline;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .kv .k{width:74px;flex:0 0 74px;color:var(--ink-3);font-size:11px;letter-spacing:.05em}
+  .kv .v{font-family:var(--serif);font-variant-numeric:tabular-nums;color:var(--ink-2)}
+  .kv .v.mask{letter-spacing:.06em}
+  .kv .a{margin-left:auto;font-size:11.5px;color:var(--amber);text-decoration:none}
+  .note{font-size:11.5px;color:var(--ink-3);line-height:1.7;margin-top:12px}
+  .note b{color:var(--ink-2);font-weight:500}
+
+  .spark{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+  .bars{display:flex;align-items:flex-end;gap:5px;height:118px;margin-top:12px;border-bottom:1px solid var(--line-2)}
+  .bars i{flex:1;background:var(--amber);opacity:.82;display:block;border-radius:1px 1px 0 0;min-height:2px}
+  .bars i.z{background:var(--line-2);opacity:1}
+  .axis{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-3);margin-top:6px;letter-spacing:.04em}
+</style>
+</head>
+<body>
+
+<!-- ==================== 画板 1：模型页（先选模型，再定来源） ==================== -->
+<div class="board">
+  <aside class="rail">
+    <div class="mark"><i></i><div><b>TokenWatch</b><small>Usage Ledger</small></div></div>
+    <nav class="nav">
+      <a href="#"><span class="dot"></span>总览</a>
+      <a href="#"><span class="dot"></span>账户</a>
+      <a href="#" class="on"><span class="dot"></span>模型</a>
+      <a href="#"><span class="dot"></span>定价</a>
+    </nav>
+    <div class="rail-foot">
+      已接入 <b>3</b> 家<br>
+      余额合计 <b>¥47.88</b>
+    </div>
+  </aside>
+
+  <main>
+    <div class="head">
+      <div>
+        <h1>模型</h1>
+        <p>先勾出你实际会用的模型，再看它们分别能从哪家买到；选定来源后去对应官网登录，用量与余额就自动接进来。</p>
+      </div>
+      <div class="head-r">
+        <button class="btn">目录更新于 12:15</button>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step on"><b>1</b>选模型<small>4 个</small></div>
+      <div class="step"><b>2</b>定来源<small>待定</small></div>
+      <div class="step"><b>3</b>登录接入<small>未开始</small></div>
+    </div>
+
+    <div class="two">
+      <section class="pick">
+        <div class="searchbar">
+          <div class="search">
+            <span style="color:var(--ink-3)">⌕</span>
+            <input placeholder="搜模型名或厂商，例如 claude / 通义 / glm">
+            <span class="k">/</span>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip on">全部 451</span>
+          <span class="chip">Anthropic 34</span>
+          <span class="chip">OpenAI 103</span>
+          <span class="chip">DeepSeek 18</span>
+          <span class="chip">Kimi 9</span>
+          <span class="chip">智谱 19</span>
+          <span class="chip">通义 42</span>
+          <span class="chip">豆包 7</span>
+        </div>
+
+        <div class="list">
+          <div class="g-head"><span class="v">Anthropic</span><span class="n">4 个已选</span><span class="c">单价 · 每百万 tokens</span></div>
+
+          <div class="row">
+            <span class="cb on"></span>
+            <span class="nm">Claude Fable 5<small>1M 上下文 · 支持图像</small></span>
+            <span class="num"><b>¥71</b><small>输入</small></span>
+            <span class="num"><b>¥355</b><small>输出</small></span>
+            <span class="num picked"><b>2 家可选</b><small>来源</small></span>
+          </div>
+
+          <div class="row">
+            <span class="cb"></span>
+            <span class="nm">Claude Fable 5.1<small>1M 上下文 · 支持图像</small></span>
+            <span class="num"><b>¥71</b><small>输入</small></span>
+            <span class="num"><b>¥355</b><small>输出</small></span>
+            <span class="num"><b>2 家</b><small>来源</small></span>
+          </div>
+
+          <div class="g-head"><span class="v">DeepSeek</span><span class="n">1 个已选</span><span class="c">单价 · 每百万 tokens</span></div>
+
+          <div class="row">
+            <span class="cb on"></span>
+            <span class="nm">DeepSeek V4 Flash 0423<small>1M 上下文 · 文本</small></span>
+            <span class="num"><b>¥0.65</b><small>输入</small></span>
+            <span class="num"><b>¥1.29</b><small>输出</small></span>
+            <span class="num picked"><b>2 家可选</b><small>来源</small></span>
+          </div>
+
+          <div class="row">
+            <span class="cb"></span>
+            <span class="nm">DeepSeek V4 Pro 0423<small>1M 上下文 · 文本</small></span>
+            <span class="num"><b>¥11.36</b><small>输入</small></span>
+            <span class="num"><b>¥22.72</b><small>输出</small></span>
+            <span class="num"><b>1 家</b><small>来源</small></span>
+          </div>
+
+          <div class="g-head"><span class="v">智谱</span><span class="n">2 个已选</span><span class="c">单价 · 每百万 tokens</span></div>
+
+          <div class="row">
+            <span class="cb on"></span>
+            <span class="nm">GLM 5.3<small>1M 上下文 · 支持图像</small></span>
+            <span class="num"><b>¥0.57</b><small>输入</small></span>
+            <span class="num"><b>¥25.56</b><small>输出</small></span>
+            <span class="num picked"><b>1 家可选</b><small>来源</small></span>
+          </div>
+
+          <div class="row">
+            <span class="cb on"></span>
+            <span class="nm">GLM 5.3 Flash<small>1M 上下文 · 文本</small></span>
+            <span class="num"><b>¥0.20</b><small>输入</small></span>
+            <span class="num"><b>¥0.66</b><small>输出</small></span>
+            <span class="num picked"><b>1 家可选</b><small>来源</small></span>
+          </div>
+
+          <div class="row">
+            <span class="cb"></span>
+            <span class="nm">Kimi K3<small>1M 上下文 · 支持图像</small></span>
+            <span class="num"><b>¥1.36</b><small>输入</small></span>
+            <span class="num"><b>¥106.5</b><small>输出</small></span>
+            <span class="num"><b>1 家</b><small>来源</small></span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side">
+        <div class="side-h"><b>已选模型</b><span>4 个</span></div>
+        <div class="picks">
+          <div class="pick-item">
+            <div class="t"><b>Claude Fable 5</b><i>Anthropic</i></div>
+            <div class="src"><span class="r on"></span>Anthropic 官方<em>¥71 / ¥355</em></div>
+            <div class="src"><span class="r"></span>OpenRouter 中转<em class="save">低 12%</em></div>
+          </div>
+          <div class="pick-item">
+            <div class="t"><b>DeepSeek V4 Flash</b><i>DeepSeek</i></div>
+            <div class="src"><span class="r on"></span>DeepSeek 官方<em>¥0.65 / ¥1.29</em></div>
+            <div class="src"><span class="r"></span>中转站 · New API<em class="save">低 8%</em></div>
+          </div>
+          <div class="pick-item">
+            <div class="t"><b>GLM 5.3</b><i>智谱</i></div>
+            <div class="src"><span class="r on"></span>智谱开放平台<em>¥0.57 / ¥25.56</em></div>
+          </div>
+          <div class="pick-item">
+            <div class="t"><b>GLM 5.3 Flash</b><i>智谱</i></div>
+            <div class="src"><span class="r on"></span>智谱开放平台<em>¥0.20 / ¥0.66</em></div>
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--ink-3);line-height:1.65;padding:10px 0 0">
+          没勾的模型不会进总览、也不会参与比价。之后随时能在账户详情里加减。
+        </p>
+
+        <div class="side-cta">
+          <button class="btn solid">下一步 · 去官网登录</button>
+          <p>将依次打开 <b>Anthropic</b>、<b>DeepSeek</b>、<b>智谱</b> 三家控制台。已登录过的那家会跳过。</p>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<!-- ==================== 画板 2：账户详情页 ==================== -->
+<div class="board">
+  <aside class="rail">
+    <div class="mark"><i></i><div><b>TokenWatch</b><small>Usage Ledger</small></div></div>
+    <nav class="nav">
+      <a href="#"><span class="dot"></span>总览</a>
+      <a href="#" class="on"><span class="dot"></span>账户</a>
+      <a href="#"><span class="dot"></span>模型</a>
+      <a href="#"><span class="dot"></span>定价</a>
+    </nav>
+    <div class="rail-foot">
+      已接入 <b>3</b> 家<br>
+      余额合计 <b>¥47.88</b>
+    </div>
+  </aside>
+
+  <main>
+    <div class="crumb">账户 / <b>智谱 GLM</b></div>
+
+    <div class="acct-head">
+      <h1>智谱 GLM</h1>
+      <span class="tag ok">官网直连 · 正常</span>
+      <div class="sp">
+        <button class="btn">测试连接</button>
+        <button class="btn">停用账户</button>
+      </div>
+    </div>
+
+    <div class="figures">
+      <div class="fig">
+        <div class="k">可用余额</div>
+        <div class="v big"><span class="cur">¥</span>19.10</div>
+        <div class="n">含赠送 ¥40.00 · 官网实时</div>
+      </div>
+      <div class="fig">
+        <div class="k">本区间消费</div>
+        <div class="v"><span class="cur">¥</span>0.44</div>
+        <div class="n">10-28 至 11-03 · 实扣</div>
+      </div>
+      <div class="fig">
+        <div class="k">输入 / 输出</div>
+        <div class="v">11<span class="u">万</span> / 221</div>
+        <div class="n">官网账单口径</div>
+      </div>
+      <div class="fig">
+        <div class="k">请求数</div>
+        <div class="v">—</div>
+        <div class="n">该平台账单不提供请求数</div>
+      </div>
+    </div>
+
+    <div class="panels">
+      <section>
+        <div class="p-h"><b>这个账户开放哪些模型</b><a href="#">+ 添加模型</a></div>
+        <table>
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th class="r">输入 / 百万</th>
+              <th class="r">输出 / 百万</th>
+              <th class="r">本区间</th>
+              <th class="r">占比</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="m">GLM 5.3<small>1M 上下文 · 图像</small></td>
+              <td class="n"><b>¥0.57</b></td>
+              <td class="n"><b>¥25.56</b></td>
+              <td class="n"><b>¥0.41</b></td>
+              <td class="n">93%</td>
+            </tr>
+            <tr>
+              <td class="m">GLM 5.3 Flash<small>1M 上下文 · 文本</small></td>
+              <td class="n"><b>¥0.20</b></td>
+              <td class="n"><b>¥0.66</b></td>
+              <td class="n"><b>¥0.03</b></td>
+              <td class="n">7%</td>
+            </tr>
+            <tr>
+              <td class="m">GLM 5.2<small>1M 上下文 · 文本</small></td>
+              <td class="n"><b>¥0.04</b></td>
+              <td class="n"><b>¥48.28</b></td>
+              <td class="n">—</td>
+              <td class="n">0%</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="spark">
+          <div class="p-h" style="border-bottom:0;padding-bottom:0">
+            <b>近 14 天</b><span>单位 ¥</span>
+          </div>
+          <div class="bars">
+            <i style="height:6%"></i><i class="z" style="height:4%"></i><i style="height:9%"></i>
+            <i style="height:14%"></i><i style="height:11%"></i><i class="z" style="height:3%"></i>
+            <i style="height:22%"></i><i style="height:31%"></i><i style="height:18%"></i>
+            <i class="z" style="height:2%"></i><i style="height:26%"></i><i style="height:41%"></i>
+            <i style="height:35%"></i><i style="height:48%"></i>
+          </div>
+          <div class="axis"><span>10-21</span><span>10-25</span><span>10-29</span><span>11-03</span></div>
+        </div>
+
+        <div style="margin-top:24px">
+          <div class="p-h" style="border-bottom:0;padding-bottom:0"><b>最近调用</b><a href="#">全部流水</a></div>
+          <table>
+            <thead>
+              <tr><th>时间</th><th>模型</th><th class="r">输入</th><th class="r">输出</th><th class="r">金额</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="n" style="text-align:left">11-03 12:40</td><td class="m">GLM 5.3</td><td class="n">3,204</td><td class="n">118</td><td class="n"><b>¥0.41</b></td></tr>
+              <tr><td class="n" style="text-align:left">11-02 21:07</td><td class="m">GLM 5.3 Flash</td><td class="n">18,442</td><td class="n">63</td><td class="n"><b>¥0.03</b></td></tr>
+              <tr><td class="n" style="text-align:left">11-01 09:12</td><td class="m">GLM 5.3</td><td class="n">61,265</td><td class="n">40</td><td class="n" style="font-size:11.5px">资源包抵扣</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="cred">
+        <div class="p-h"><b>凭据与额度</b><span>本机存储</span></div>
+        <div class="kv"><span class="k">登录票据</span><span class="v mask">eyJhbG…NO0Q</span><a href="#">更换</a></div>
+        <div class="kv"><span class="k">有效期</span><span class="v">官网调用成功 · 票据仍有效</span></div>
+        <div class="kv"><span class="k">资源包</span><span class="v">312.8 万 tokens 剩余</span></div>
+        <div class="kv"><span class="k">累计消费</span><span class="v">¥20.90</span></div>
+        <div class="kv"><span class="k">上次成功</span><span class="v">11-03 12:40</span></div>
+        <p class="note">票据约 7 天需重采。官网调用返回正常时，即使超过经验有效期也不会标红——<b>以实测为准</b>。</p>
+
+        <div style="margin-top:20px">
+          <div class="p-h"><b>余额预警</b><span>已触发</span></div>
+          <div class="kv"><span class="k">阈值</span><span class="v">低于 ¥30.00 时提醒</span><a href="#">修改</a></div>
+          <div class="kv"><span class="k">当前</span><span class="v" style="color:var(--brick)">¥19.10 · 差 ¥10.90</span></div>
+          <p class="note">只在总览顶部标一条，不弹窗、不打断。</p>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

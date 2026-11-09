@@ -30,7 +30,11 @@ function goPage(name) {
   if (location.hash.slice(1) !== curPage) {
     history.replaceState(null, "", "#" + curPage);
   }
-  if (curPage === "models" && window.MDL && !window.MDL.loaded) window.MDL.load();
+  if (curPage === "models" && window.MDL) {
+    if (!window.MDL.loaded) window.MDL.load();
+    /* 「实际用过的模型」依赖官网用量，进页面时重算一次 */
+    else window.MDL.renderLive();
+  }
 }
 
 /* 总览右栏：一行一个账户 */

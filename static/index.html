@@ -102,7 +102,7 @@
           <div class="kpi">
             <div class="kpi-k"><span id="tapeTok7K">本月</span> Token <em>输入+输出+缓存</em></div>
             <div class="kpi-v" id="tapeTok7V">—</div>
-            <div class="kpi-f">已接入：<b id="tapeProviders">—</b></div>
+            <div class="kpi-f" id="tapeTok7F">已接入：<b id="tapeProviders">—</b></div>
           </div>
           <div class="kpi">
             <div class="kpi-k">监控状态</div>
@@ -142,6 +142,7 @@
             <h2>用量明细</h2>
             <span class="card-sub">一行一家 · 逐家标注口径</span>
             <div class="grow"></div>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnExport">导出 CSV</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btnPlatformCreds">平台凭据</button>
           </div>
 
@@ -152,6 +153,8 @@
           </div>
 
           <div class="exp-strip" id="expStrip" hidden></div>
+
+          <div class="fx-bar" id="fxBar" hidden></div>
 
           <div id="platformView"></div>
 
@@ -186,7 +189,8 @@
             <p>每张卡片对应一个账户。点「平台凭据」填入该平台的控制台票据或 API Key，之后自动续期、不用重复登录。</p>
           </div>
           <div class="page-head-acts">
-            <button type="button" class="btn btn-primary btn-sm" id="btnAddAccount">添加账户</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btnWizard">接入向导</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnAddAccount">单个添加</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btnAccountsCreds">平台凭据</button>
           </div>
         </div>
@@ -199,7 +203,7 @@
         <div class="page-head">
           <div>
             <h2>模型清单</h2>
-            <p>勾选你实际会用到的模型，总览和定价只显示这些。清单取自公开目录，价格随目录更新。</p>
+            <p>勾选你实际会用到的模型。非空时，总览与定价只统计这些模型；全部不选 = 不限制，显示全部。</p>
           </div>
           <div class="page-head-acts">
             <button type="button" class="btn btn-ghost btn-sm" id="mdlRefresh">更新目录</button>
@@ -212,11 +216,13 @@
             <input id="mdlSearch" type="search" placeholder="搜索模型或厂商，例如 gpt / 通义 / claude" autocomplete="off">
           </div>
           <label class="mdl-toggle"><input type="checkbox" id="mdlOnlySel"><span>只看已选</span></label>
+          <label class="mdl-toggle"><input type="checkbox" id="mdlOnlyAcc"><span>只看已接入平台</span></label>
           <div class="mdl-count"><b id="mdlSelN">0</b> / <span id="mdlTotalN">0</span> 已选</div>
         </div>
 
         <div class="mdl-chips" id="mdlVendors"></div>
         <div class="mdl-meta" id="mdlMeta">读取目录…</div>
+        <div class="mdl-live" id="mdlLive" hidden></div>
         <div class="mdl-list" id="mdlList"></div>
       </section>
 
@@ -271,6 +277,10 @@
         <div id="rechargeEdits" class="recharge-edits"></div>
       </div>
       <p class="modal-note">刷新间隔、余额阈值与充值地址保存到本机 <code>config.json</code>，不含任何密钥。各提供商单独阈值留空即沿用上面的默认值。</p>
+      <div class="notify-row">
+        <button type="button" class="btn btn-ghost btn-sm" id="btnNotifyPerm">开启余额提醒</button>
+        <span class="notify-state" id="notifyState">余额低于阈值时发一条系统通知，每个账户每天最多一次</span>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" id="btnCancelSettings">取消</button>
@@ -313,8 +323,50 @@
   </div>
 </div>
 
+<!-- 模型选择器（三处共用：关注清单 / 账户开放模型 / 向导） -->
+<div class="modal-mask" id="pickModal" hidden>
+  <div class="modal modal-wide pick-modal" role="dialog" aria-modal="true" aria-labelledby="pickTitle">
+    <div class="modal-head">
+      <h3 id="pickTitle">选择模型</h3>
+      <button class="icon-btn" id="pickCancel" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body pick-body">
+      <p class="pick-hint" id="pickHint"></p>
+      <div class="pick-bar">
+        <input id="pickSearch" type="search" placeholder="搜索模型名或厂商，例如 claude / 通义 / gpt" autocomplete="off">
+        <div class="pick-cnt"><b id="pickN">0</b> 已选</div>
+      </div>
+      <div class="pick-chips" id="pickVendors"></div>
+      <div class="pick-list" id="pickList"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" id="pickAll">全选当前结果</button>
+      <button class="btn btn-ghost btn-sm" id="pickClear">清空</button>
+      <button class="btn btn-primary" id="pickBtnSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 接入向导：选平台 → 填凭据/登录 → 确认模型 -->
+<div class="modal-mask" id="wizModal" hidden>
+  <div class="modal modal-wide wiz-modal" role="dialog" aria-modal="true" aria-labelledby="wizTitle">
+    <div class="modal-head">
+      <h3 id="wizTitle">接入向导</h3>
+      <button class="icon-btn" id="btnCloseWiz" aria-label="关闭">✕</button>
+    </div>
+    <div class="wiz-steps" id="wizSteps"></div>
+    <div class="modal-body wiz-body" id="wizBody"></div>
+    <div class="modal-foot">
+      <span class="modal-foot-note" id="wizNote"></span>
+      <button class="btn btn-ghost" id="wizPrev">上一步</button>
+      <button class="btn btn-primary" id="wizNext">下一步</button>
+    </div>
+  </div>
+</div>
+
 <script src="/static/app.js"></script>
 <script src="/static/models.js"></script>
+<script src="/static/picker.js"></script>
 <script src="/static/accounts.js"></script>
 <script src="/static/shell.js"></script>
 </body>

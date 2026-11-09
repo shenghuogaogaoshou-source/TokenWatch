@@ -220,17 +220,20 @@ function unifiedTotals() {
   };
   /* 1) 官网口径：只累加落在区间内的日期（接口可能给出窗口外的日期） */
   for (const pid of covered) {
-    const days = u[pid].days || {};
+    const fx = platformFx(pid) || u[pid];
+    const days = (fx && fx.days) || {};
     for (const d of Object.keys(days)) {
       if (d >= from) acc(days[d] || {});
     }
     t.platN++;
   }
-  /* 2) 本地兜底：仅算未被官网覆盖的提供商，且同样取当前区间 */
+  /* 2) 本地兜底：仅算未被官网覆盖的提供商，且同样取当前区间。
+     注意这里也必须过一遍模型过滤，否则「官网覆盖的家归零、本地兜底的家照旧」
+     会让 KPI 比明细表还大，自相矛盾。 */
   const locals = (state.dataMain && state.dataMain.providers) || [];
   for (const p of locals) {
     if (covered.has(p.id) || !p.usage || !p.usage.totals) continue;
-    acc(p.usage.totals);
+    acc(usageFiltered(p.usage).totals);
     t.localN++;
   }
   return t;
@@ -364,7 +367,14 @@ function renderAll() {
   renderProviders();
   renderDetail();
   renderExpiryStrip();
+  notifyLowBalance();
 }
+
+/* 模型页勾选变化 → 重算过滤缓存并整页重绘（数据没变，只是口径变了） */
+window.onModelSelChange = function () {
+  _FX = { sig: "", map: {} };
+  renderAll();
+};
 
 /* 票据即将过期的推荐条：把「期限快到期」的提供商排到最前，提示优先使用 / 尽快续票 */
 function renderExpiryStrip() {
@@ -480,9 +490,25 @@ function renderTape() {
   $("#tapeCost7F").textContent = tot.req
     ? tot.req + " 次请求 · " + srcF
     : (anyPlat ? rt + "官网侧暂无调用" : rt + "暂无调用记录");
-  $("#tapeTok7V").innerHTML = String(compactTok(tot.tok)).replace(/([\d.]+)\s*(亿|万|k)?/,
-    (m, num, unit) => num + (unit ? '<i class="unit">' + unit + "</i>" : ""));
-  $("#tapeProviders").textContent = provs.map((p) => p.name).join(" · ") || "—";
+  /* 有金额却没有 token：说明区间内只有「仅提供金额」的平台在产生费用，
+     这时画一个 0 会被读成「没用过」，所以显示 — 并说明原因。 */
+  const tokV = $("#tapeTok7V");
+  const noTokDetail = !tot.tok && tot.cost > 0;
+  if (noTokDetail) {
+    tokV.textContent = "—";
+    tokV.title = "区间内有费用但没有 token 数：这些平台的官网账单只提供金额，不提供 token 明细";
+  } else {
+    tokV.removeAttribute("title");
+    tokV.innerHTML = String(compactTok(tot.tok)).replace(/([\d.]+)\s*(亿|万|k)?/,
+      (m, num, unit) => num + (unit ? '<i class="unit">' + unit + "</i>" : ""));
+  }
+  const tokF = $("#tapeTok7F");
+  if (tokF) {
+    if (noTokDetail) tokF.textContent = "这些平台只给金额，官网不提供 token 明细";
+    else tokF.innerHTML = '已接入：<b id="tapeProviders">—</b>';
+  }
+  const tp = $("#tapeProviders");
+  if (tp) tp.textContent = provs.map((p) => p.name).join(" · ") || "—";
 
   const cur = provs.find((p) => p.is_current) || provs[0];
   const u = (state.platform && state.platform.usage) || {};
@@ -532,7 +558,15 @@ function renderPricing() {
     noteEl.textContent = note;
   }
 
-  const top = p.top || [];
+  /* 关注清单生效：只比已选模型的价，其余家不展示（避免「推荐了一个我没选的模型」） */
+  const selP = selModelSet();
+  const hitP = (x) => !selP.size || modelHit(x && (x.model || x.label || x.key), selP);
+  const topAll = p.top || [];
+  const top = topAll.filter(hitP);
+  const platforms = (p.platforms || [])
+    .map((pf) => Object.assign({}, pf, { models: (pf.models || []).filter(hitP) }))
+    .filter((pf) => (pf.models || []).length);
+
   /* 当前时段首选 + 备选 */
   let head = '<div class="price-lead">';
   if (top.length) {
@@ -548,13 +582,16 @@ function renderPricing() {
           <i class="pl-alt-p">${price3(r.blended)}</i>
           <em>${esc(r.platform)} · ${esc(r.slot_label)}</em></span>`).join("") + '</div>';
     }
+  } else if (selP.size && topAll.length) {
+    head += '<div class="pl-main"><div class="pl-name">已选模型里没有可比的定价' +
+      '<span class="pl-plat">点总览明细卡顶部「清除筛选」看全部</span></div></div>';
   } else {
     head += '<div class="pl-main"><div class="pl-name">暂无可比价的模型定价</div></div>';
   }
   head += '</div>';
 
   /* 逐家定价卡：该家当前生效的三档价 + 综合单价 */
-  const grid = (p.platforms || []).map((pf) => {
+  const grid = platforms.map((pf) => {
     const rows = (pf.models || []).map((m) => {
       const pr = m.prices || {};
       const num = (x) => (x == null ? "—" : (x >= 10 ? x.toFixed(1) : x.toFixed(x >= 1 ? 2 : 3)));
@@ -667,7 +704,7 @@ function expiryText(ex) {
 /* 提供商卡片用量条：有官网数据就用官网，否则回落本地记录（逐家判定） */
 function srcUsageOf(p) {
   const local = (p.usage || zeroUsage()).totals;
-  const r = platformFor(p.id);
+  const r = platformFx(p.id);
   if (r && r.status === "ok" && r.mode === "usage" && r.totals) {
     return { totals: r.totals, src: "platform", platform: r };
   }
@@ -694,18 +731,27 @@ function buildCard(p, i) {
     }
   }
 
-  const models = (p.models && p.models.length ? p.models : ["未指定模型"]);
-  const modelTags = models.slice(0, 5).map((m) => `<span class="tag" title="${esc(m)}">${esc(m)}</span>`).join("") +
-    (models.length > 5 ? `<span class="tag">+${models.length - 5}</span>` : "");
-
-  /* 头部 */
+  /* 开放模型：不再是「未指定模型」这种点不动的死标签，而是能点开的入口 */
   const head = el("div", "p-head");
   head.innerHTML = `
     <div class="ident">${esc(vis.glyph)}</div>
     <div class="p-name">
       <h3>${esc(p.name)}${p.is_current ? '<span class="cur">当前使用</span>' : ""}</h3>
-      <div class="models">${modelTags}</div>
+      <div class="models"></div>
     </div>`;
+  const mBox = head.querySelector(".models");
+  const paintModels = (arr) => {
+    const list = (arr && arr.length) ? arr : null;
+    mBox.innerHTML = list
+      ? list.slice(0, 4).map((m) =>
+          `<span class="tag" title="${esc(m)}">${esc(shortModelName(m))}</span>`).join("") +
+        (list.length > 4 ? `<span class="tag" title="${esc(list.join("\n"))}">+${list.length - 4}</span>` : "") +
+        `<button type="button" class="add-model on" title="修改这个账户开放哪些模型">编辑</button>`
+      : `<button type="button" class="add-model" title="这个账户开放哪些模型，只有选了才会出现在模型页与筛选里">＋ 选择开放模型</button>`;
+    const b = mBox.querySelector(".add-model");
+    if (b) b.addEventListener("click", () => openModelPick(p, list, paintModels));
+  };
+  paintModels(p.models || null);
   const idx = el("div", "p-idx");
   const siteA = el("a", "link-mini", "官网 ↗");
   siteA.href = p.website_url || "#";
@@ -792,6 +838,34 @@ function buildCard(p, i) {
   }
   card.appendChild(foot);
   return card;
+}
+
+function shortModelName(m) {
+  const s = String(m || "");
+  return s.includes("/") ? s.split("/").pop() : s;
+}
+
+/* 账户级「开放哪些模型」选择器：写 accounts.models，不碰采集逻辑 */
+function openModelPick(p, selected, onDone) {
+  if (!window.PICKER) { toast("模型目录还没就绪，稍后再试"); return; }
+  window.PICKER.open({
+    title: "「" + p.name + "」开放哪些模型",
+    hint: "只影响这个账户的标注与来源推荐，不影响采集。空着 = 不限制。",
+    selected: selected || [],
+    driver: p.driver || "",
+    onSave: async (arr) => {
+      try {
+        const j = await postJSON("/api/account_models", { id: p.id, models: arr });
+        if (!j.ok) throw new Error(j.error || "保存失败");
+        p.models = arr;
+        onDone(arr);
+        toast(arr.length ? "已记下 " + arr.length + " 个模型" : "已设为不限制");
+        if (typeof window.syncModelFilterBar === "function") window.syncModelFilterBar();
+      } catch (e) {
+        toast("保存失败：" + e.message);
+      }
+    },
+  });
 }
 
 function defaultRecharge(name) {
@@ -965,6 +1039,7 @@ function renderDetail() {
   /* 图表只画区间内真有数据的家；明细表把每家都列出来，没有用量的按 0 计
      （未接入通道 gpt / Codex 直连在服务端已被剔除，这里不会出现） */
   const allProvs = mergedProviders();
+  syncModelFilterBar(allProvs);
   const hasData = (p) => Object.keys((p.usage && p.usage.days) || {}).length > 0;
   const chartProvs = allProvs.filter(hasData);
   const zeroN = allProvs.length - chartProvs.length;
@@ -977,7 +1052,11 @@ function renderDetail() {
   const anyCostOnly = allProvs.some((p) => p.usage && p.usage.costOnly);
   const anyNoReq = allProvs.some((p) => p.usage && p.usage.noRequests && !p.usage.costOnly);
 
-  renderChart(chartProvs, { emptyHtml: unifiedEmptyHtml() });
+  renderChart(chartProvs, {
+    emptyHtml: selModelSet().size
+      ? "已选模型在统计区间内没有用量<br><span style='font-size:11px;color:var(--ink-3)'>点上方「清除筛选」看全部模型</span>"
+      : unifiedEmptyHtml(),
+  });
   renderApiTable(allProvs, {
     emptyText: unifiedEmptyText(),
     noteText: allProvs.length
@@ -1018,6 +1097,140 @@ function platUsageShape(r) {
   };
 }
 
+/* ============================================================
+   关注清单（模型过滤）
+   ------------------------------------------------------------
+   模型页勾的模型 = 关注清单；非空时，总览的 KPI / 趋势图 / 明细表
+   都只统计这些模型。空 = 不限制，行为与没有这个功能时完全一致。
+
+   两条硬规则，都是为了防止「看起来对、其实假」：
+   1) 只在平台真的给了模型明细（model_days）时才过滤；
+      只给总额的平台原样计入，并标 _fnostr，界面上说明「整笔计入」。
+   2) 官网模型名（deepseek-chat）与目录 id（deepseek/deepseek-v4）不一定相同，
+      所以按「全名相等 / 末段相等 / 互相包含」做宽松匹配，并在界面写明是模糊匹配。
+   ============================================================ */
+const FX_KEYS = ["requests", "input", "output", "cache_read", "cache_creation", "cost"];
+
+function selModelSet() {
+  const s = (typeof MDL !== "undefined" && MDL && MDL.sel) ? MDL.sel : null;
+  return (s instanceof Set) ? s : new Set();
+}
+function selModelList() { return [...selModelSet()]; }
+
+function modelHit(name, sel) {
+  const m = String(name || "").toLowerCase().trim();
+  if (!m) return false;
+  for (const s of sel) {
+    const t = String(s || "").toLowerCase().trim();
+    if (!t) continue;
+    if (m === t) return true;
+    const tail = t.includes("/") ? t.split("/").pop() : "";
+    if (tail && tail !== t) {
+      if (m === tail || m.includes(tail) || tail.includes(m)) return true;
+    }
+  }
+  return false;
+}
+
+function fxZero() {
+  return { requests: 0, input: 0, output: 0, cache_read: 0, cache_creation: 0, cost: 0 };
+}
+function fxAdd(dst, src) {
+  if (!src) return;
+  for (const k of FX_KEYS) dst[k] = (dst[k] || 0) + (Number(src[k]) || 0);
+}
+
+/* 按关注清单重算一家 provider 的 days / totals / models */
+function usageFiltered(u) {
+  if (!u) return u;
+  const sel = selModelSet();
+  if (!sel.size) return u;
+  const md = u.model_days || null;
+  if (!md || !Object.keys(md).length) {
+    return Object.assign({}, u, { _fnostr: true, _fhit: 0, _fall: 0 });
+  }
+  const days = {}, models = {}, totals = fxZero();
+  let hit = 0, all = 0;
+  for (const name of Object.keys(md)) {
+    all++;
+    if (!modelHit(name, sel)) continue;
+    hit++;
+    const mo = fxZero();
+    mo.model = name;
+    const dd = md[name] || {};
+    for (const d of Object.keys(dd)) {
+      fxAdd(mo, dd[d]);
+      fxAdd(days[d] || (days[d] = fxZero()), dd[d]);
+    }
+    models[name] = mo;
+    fxAdd(totals, mo);
+  }
+  /* 保住原有日期轴，趋势图需要完整区间 */
+  for (const d of Object.keys(u.days || {})) if (!days[d]) days[d] = fxZero();
+  return Object.assign({}, u, {
+    days,
+    totals,
+    models: Object.values(models).sort((a, b) => (b.cost || 0) - (a.cost || 0)),
+    _fhit: hit, _fall: all, _fnostr: false,
+  });
+}
+
+/* 过滤后的官网侧结果（带缓存，避免每次渲染重算三大平台） */
+let _FX = { sig: "", map: {} };
+function fxSig() {
+  return selModelList().sort().join("|") + "#" + (state.rangeDays || 0);
+}
+function platformFx(pid) {
+  const raw = platformFor(pid);
+  if (!raw) return null;
+  if (!selModelSet().size) return raw;
+  const sig = fxSig();
+  if (_FX.sig !== sig) _FX = { sig, map: {} };
+  if (!(pid in _FX.map)) _FX.map[pid] = usageFiltered(raw);
+  return _FX.map[pid];
+}
+/* 过滤汇总，给提示条用 */
+function fxSummary(provs) {
+  const sel = selModelSet();
+  if (!sel.size) return null;
+  let hitModel = 0, noStr = 0, dropped = 0;
+  for (const p of provs) {
+    const u = p.usage || {};
+    if (u._fnostr) { noStr++; continue; }
+    if (typeof u._fhit === "number") {
+      hitModel += u._fhit;
+      if (u._fhit === 0) dropped++;
+    }
+  }
+  return { n: sel.size, hitModel, noStr, dropped, list: selModelList() };
+}
+
+/* 明细卡顶部的过滤提示条：让人一眼看出「为什么数字比预期小」 */
+function syncModelFilterBar(provs) {
+  const bar = $("#fxBar");
+  if (!bar) return;
+  const fy = fxSummary(provs || mergedProviders());
+  if (!fy) { bar.hidden = true; bar.innerHTML = ""; return; }
+  const names = fy.list;
+  const shown = names.slice(0, 3).map(shortModelName).join("、") +
+    (names.length > 3 ? " 等 " + names.length + " 个" : "");
+  bar.hidden = false;
+  bar.innerHTML =
+    "<span>只统计<b>已选模型</b>：" + esc(shown) + "</span>" +
+    (fy.hitModel
+      ? '<span class="fx-tag">命中 ' + fy.hitModel + " 个模型</span>"
+      : '<span class="fx-tag">模型名与账单对不上 · 到「模型」页勾「你实际用过的模型」</span>') +
+    (fy.dropped ? '<span class="fx-tag">' + fy.dropped + " 家无命中，按 0 计</span>" : "") +
+    (fy.noStr ? '<span class="fx-tag" title="这些平台官网只给总额、没有模型明细，无法按模型拆分，按整笔计入">' +
+      fy.noStr + " 家无模型明细 · 整笔计入</span>" : "") +
+    '<button type="button" class="fx-x" id="fxClear">清除筛选</button>';
+  const b = $("#fxClear");
+  if (b) b.addEventListener("click", () => {
+    if (window.MDL && MDL.setSel) MDL.setSel([]);
+  });
+}
+window.syncModelFilterBar = syncModelFilterBar;
+
 /* 合成视图的提供商列表：逐家决定取官网还是本地 */
 function mergedProviders() {
   const seen = new Set();
@@ -1035,7 +1248,7 @@ function mergedProviders() {
     out.push({
       id: p.id,
       name: p.name,
-      usage: useP ? platUsageShape(r) : (p.usage || zeroUsage()),
+      usage: usageFiltered(useP ? platUsageShape(r) : (p.usage || zeroUsage())),
       _src: useP ? "platform" : "local",
       _why: why,
       _pending: useP ? null : r,
@@ -1050,7 +1263,8 @@ function mergedProviders() {
     if (r && r.status === "ok" && r.mode === "usage") {
       out.push({
         id: pid, name: r.provider_name || r.label || "平台",
-        usage: platUsageShape(r), _src: "platform", _why: "platform", _pending: null,
+        usage: usageFiltered(platUsageShape(r)),
+        _src: "platform", _why: "platform", _pending: null,
       });
     }
   }
@@ -1339,6 +1553,83 @@ function niceMax(v) {
 }
 
 /* 逐 API / 平台的用量表：一行一家，第二列标注该行数据来自官网还是本地回落 */
+/* ============================================================
+   导出与提醒
+   ============================================================ */
+function exportCSV() {
+  const rows = state.exportRows || [];
+  if (!rows.length) { toast("本区间没有可导出的数据"); return; }
+  const cell = (v) => {
+    const s = String(v == null ? "" : v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const sum = rows.reduce((s, x) => s + (x.cost || 0), 0) || 1e-9;
+  const head = ["平台", "用量来源", "请求数", "输入token", "输出token",
+    "缓存读token", "消耗(CNY)", "占比%", "最后活跃", "模型数"];
+  const lines = [head.map(cell).join(",")];
+  for (const r of rows) {
+    lines.push([
+      r.name,
+      r.src === "platform" ? "官网实扣" : (r.why === "empty" ? "区间无用量" : "本地记录"),
+      r.costOnly ? "" : (r.noReq ? "" : r.req),
+      r.costOnly ? "" : r.inp,
+      r.costOnly ? "" : r.out,
+      r.costOnly ? "" : r.cache,
+      (r.cost || 0).toFixed(4),
+      ((r.cost / sum) * 100).toFixed(1),
+      r.last || "",
+      r.nModels || 0,
+    ].map(cell).join(","));
+  }
+  const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "tokenwatch-" + (state.rangeKey || "range") + "-" + localISO(0) + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
+  toast("已导出 " + rows.length + " 行（" + rangeText() + "）");
+}
+
+function cnyBalance(b) {
+  if (!b || b.status !== "ok" || b.type !== "money") return null;
+  const fx = (state.cfg && state.cfg.usd_cny) || 7.1;
+  let sum = 0;
+  for (const it of (b.items || [])) {
+    sum += (it.currency === "CNY") ? (it.total || 0) : (it.total || 0) * fx;
+  }
+  return sum;
+}
+
+/* 余额低于阈值时发一条系统通知；同一账户同一天只提醒一次 */
+function notifyLowBalance() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const today = localISO(0);
+  const KEY = "tokenwatch-notified";
+  let done = {};
+  try { done = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { done = {}; }
+  let changed = false;
+  for (const p of (state.providers || [])) {
+    const cny = cnyBalance(p.balance);
+    if (cny == null || cny <= 0) continue;
+    const low = lowFor(p.name);
+    if (!low || cny >= low) continue;
+    const k = p.id + ":" + today;
+    if (done[k]) continue;
+    done[k] = 1;
+    changed = true;
+    try {
+      new Notification("TokenWatch · 余额偏低", {
+        body: p.name + " 还剩 " + money(cny) + "，低于预警线 " + money(low),
+        tag: k,
+      });
+    } catch (e) { /* 通知失败不影响主流程 */ }
+  }
+  if (changed) {
+    try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) { /* 忽略 */ }
+  }
+}
+
 function renderApiTable(provs, opts) {
   opts = opts || {};
   const rows = [];
@@ -1359,6 +1650,7 @@ function renderApiTable(provs, opts) {
     });
   }
   rows.sort((a, b) => b.cost - a.cost);
+  state.exportRows = rows;
   const sumCost = rows.reduce((s, r) => s + r.cost, 0) || 1e-9;
 
   const tbody = $("#modelRows");
@@ -1714,6 +2006,36 @@ function bind() {
 
   const pc = $("#btnPlatformCreds");
   if (pc) pc.addEventListener("click", openPlatformCreds);
+
+  const ex = $("#btnExport");
+  if (ex) ex.addEventListener("click", exportCSV);
+
+  const np = $("#btnNotifyPerm");
+  if (np) {
+    const upd = () => {
+      const s = $("#notifyState");
+      if (!("Notification" in window)) {
+        if (s) s.textContent = "这个运行环境不支持系统通知";
+        np.disabled = true;
+        return;
+      }
+      const st = Notification.permission;
+      if (s) {
+        s.textContent = st === "granted"
+          ? "已开启：余额低于阈值时提醒，每个账户每天最多一次"
+          : st === "denied"
+            ? "已被拒绝，需要到浏览器 / 系统设置里重新允许"
+            : "余额低于阈值时发一条系统通知，每个账户每天最多一次";
+      }
+      np.textContent = st === "granted" ? "已开启" : "开启余额提醒";
+      np.disabled = (st === "granted" || st === "denied");
+    };
+    upd();
+    np.addEventListener("click", async () => {
+      try { await Notification.requestPermission(); } catch (e) { /* 用户取消 */ }
+      upd();
+    });
+  }
   const pcl = $("#btnClosePlatform");
   if (pcl) pcl.addEventListener("click", closePlatformCreds);
   const pcl2 = $("#btnClosePlatform2");
