@@ -19,6 +19,7 @@ const MDL = (function () {
     onlyAcc: false,
     limit: 120,
     sel: new Set(),
+    delta: "",
   };
 
   const $id = (x) => document.getElementById(x);
@@ -186,7 +187,8 @@ const MDL = (function () {
     host.textContent = data.total
       ? data.total + " 个模型 · " + vendors + " 个厂商分组 · 目录更新于 " + (when || "—") +
         (S.accounts.length ? " · 其中 " + mine + " 个有已接入的账户能提供" : " · 还没接入任何账户") +
-        (data.stale ? "（缓存已过期，正在用旧数据）" : "")
+        (data.stale ? "（缓存已过期，正在用旧数据）" : "") +
+        (S.delta ? " · " + S.delta : "")
       : "目录为空";
   }
 
@@ -242,20 +244,51 @@ const MDL = (function () {
     });
   }
 
+  /* 更新目录要有增量提示：只说「已更新」等于什么都没说，用户不知道多了还是少了 */
+  function deltaText(before, after) {
+    if (!before.length) return "";
+    const a = new Set(after), b = new Set(before);
+    const add = after.filter((id) => !b.has(id)).length;
+    const del = before.filter((id) => !a.has(id)).length;
+    if (!add && !del) return "本次没有新增或下架的模型";
+    const bits = [];
+    if (add) bits.push("新增 " + add + " 个");
+    if (del) bits.push("下架 " + del + " 个");
+    return bits.join(" · ");
+  }
+
   async function load(force) {
     if (S.loading) return;
     S.loading = true;
     const btn = $id("mdlRefresh");
     if (btn) btn.classList.add("loading");
+    const before = S.all.map((m) => m.id);
+    /* 失败文案要能读：HTTP 状态、非 JSON、断网分别说清楚，不把 "Unexpected token b" 甩给用户 */
+    const getJSON = async (url) => {
+      let r;
+      try {
+        r = await fetch(url);
+      } catch (e) {
+        throw new Error("连不上本地服务");
+      }
+      if (!r.ok) throw new Error("服务返回 " + r.status);
+      try {
+        return await r.json();
+      } catch (e) {
+        throw new Error("返回内容不是有效 JSON");
+      }
+    };
     try {
       /* 目录与账户清单一起拉：行里要标「这个模型有没有已接入的账户能提供」 */
       const [jr, ja] = await Promise.all([
-        fetch("/api/catalog?full=1" + (force ? "&refresh=1" : "")).then((r) => r.json()),
-        fetch("/api/accounts").then((r) => r.json()).catch(() => null),
+        getJSON("/api/catalog?full=1" + (force ? "&refresh=1" : "")),
+        getJSON("/api/accounts").catch(() => null),
       ]);
+      if (jr && jr.ok === false) throw new Error(jr.error || "平台没有返回目录");
       S.all = (jr.models || []).slice();
       S.groups = jr.groups || [];
       if (ja) S.accounts = ja.accounts || [];
+      S.delta = force ? deltaText(before, S.all.map((m) => m.id)) : "";
       S.loaded = true;
       renderChips();
       renderMeta(jr);
@@ -263,8 +296,15 @@ const MDL = (function () {
       renderList();
       renderCount();
     } catch (e) {
+      S.delta = "";
       const host = $id("mdlMeta");
-      if (host) host.textContent = "目录读取失败：" + e.message;
+      if (host) {
+        host.innerHTML = "目录读取失败：" + (e.message || "网络不通") +
+          ' · <a href="#" id="mdlRetry">重试</a>' +
+          (S.all.length ? "（下面仍显示上次拉到的 " + S.all.length + " 个模型）" : "");
+        const rt = $id("mdlRetry");
+        if (rt) rt.addEventListener("click", (ev) => { ev.preventDefault(); load(true); });
+      }
     } finally {
       S.loading = false;
       if (btn) btn.classList.remove("loading");
