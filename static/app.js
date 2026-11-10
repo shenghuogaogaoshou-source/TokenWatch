@@ -45,6 +45,14 @@ function compactTok(v) {
 function fullNum(v) {
   return (v || 0).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
+/* 定价页折算用的小工具（token 用紧凑单位，金额按量级取小数位） */
+function fmtTok(v) { return compactTok(v); }
+function fmtCny(v) {
+  if (v == null || isNaN(v)) return "¥—";
+  if (v >= 100) return "¥" + v.toFixed(0);
+  if (v >= 1) return "¥" + v.toFixed(2);
+  return "¥" + v.toFixed(3);
+}
 /* 人民币金额：≥1 保留 2 位，<1 保留 4 位（小额成本可读） */
 function fmtCNY(v) {
   v = v || 0;
@@ -148,15 +156,25 @@ async function getJSON(url) {
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
-async function postJSON(url, body) {
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error || "保存失败");
-  return j;
+async function postJSON(url, body, timeoutMs) {
+  const ctl = timeoutMs ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctl ? ctl.signal : undefined,
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "保存失败");
+    return j;
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error("等太久了，登录窗口还开着的话可以再点一次");
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function toast(msg, isErr) {
@@ -211,12 +229,18 @@ function unifiedTotals() {
   const u = (state.platform && state.platform.usage) || {};
   const n = Math.max(1, state.rangeDays || 1);
   const from = localISO(n - 1);            // 区间最早一天（含）
-  const t = { cost: 0, tok: 0, req: 0, platN: 0, localN: 0 };
+  const t = { cost: 0, tok: 0, req: 0, platN: 0, localN: 0,
+              input: 0, output: 0, cache_read: 0, cache_creation: 0 };
   const acc = (rec) => {
     t.cost += rec.cost || 0;
     t.tok += (rec.input || 0) + (rec.output || 0) +
              (rec.cache_read || 0) + (rec.cache_creation || 0);
     t.req += rec.requests || 0;
+    /* 三档分开累计：定价页要按「你的实际输入/缓存/输出」折算成别家的钱 */
+    t.input += rec.input || 0;
+    t.output += rec.output || 0;
+    t.cache_read += rec.cache_read || 0;
+    t.cache_creation += rec.cache_creation || 0;
   };
   /* 1) 官网口径：只累加落在区间内的日期（接口可能给出窗口外的日期） */
   for (const pid of covered) {
@@ -625,7 +649,77 @@ function renderPricing() {
     </article>`;
   }).join("");
 
-  host.innerHTML = head + `<div class="price-grid">${grid}</div>`;
+  host.innerHTML = head + `<div class="price-grid">${grid}</div>` + usageCompare(platforms);
+}
+
+/* 按「你本区间真实的输入 / 缓存 / 输出 token」把它们套到每个模型的价上，
+   算「同样的量换这家要花多少钱」。比综合单价更贴近实际，因为它用的是你的配比，
+   而不是 config 里那个全局 price_mix。 */
+function usageCompare(platforms) {
+  const t = unifiedTotals();
+  const inT = t.input || 0;
+  const outT = t.output || 0;
+  const cacheT = (t.cache_read || 0) + (t.cache_creation || 0);
+  const tok = inT + outT + cacheT;
+  const rangeLabel = (() => {
+    const b = document.querySelector("#rangeSeg button.on");
+    return b ? b.textContent.trim() : "本区间";
+  })();
+
+  if (tok < 10000) {
+    return `<section class="usage-cmp muted-cmp">
+      <div class="uc-head"><h3>按你的实际用量折算</h3>
+        <span class="uc-sub">${esc(rangeLabel)}</span></div>
+      <p class="uc-empty">这个区间的 token 明细还不够（当前 ${fmtTok(tok)}），
+        等积累一些用量后，这里会算出「同样的量换别家要花多少钱」。
+        ${t.cost > 0 ? "只给金额、不给 token 的平台无法参与这类折算。" : ""}</p>
+    </section>`;
+  }
+
+  const costOf = (pr) => (inT * (pr.input || 0) +
+                          cacheT * (pr.cache || 0) +
+                          outT * (pr.output || 0)) / 1e6;
+  const items = [];
+  for (const pf of platforms) {
+    for (const m of pf.models || []) {
+      if (!m.prices || m.blended == null) continue;
+      items.push({ label: m.label, plat: pf.label, slot: pf.slot_label,
+                   cny: costOf(m.prices) });
+    }
+  }
+  if (!items.length) return "";
+  items.sort((a, b) => a.cny - b.cny);
+  const best = items[0];
+  const now = t.cost;
+  const rows = items.slice(0, 5).map((x, i) => {
+    const diff = now > 0 ? (x.cny - now) : null;
+    const tag = diff == null ? '<span class="uc-na">—</span>'
+      : Math.abs(diff) < 0.005 ? '<span class="uc-same">基本持平</span>'
+      : diff < 0 ? `<span class="uc-save">省 ¥${Math.abs(diff).toFixed(2)}（${Math.round(-diff / now * 100)}%）</span>`
+      : `<span class="uc-more">多花 ¥${diff.toFixed(2)}</span>`;
+    return `<tr class="${i === 0 ? "best" : ""}">
+      <td class="uc-name">${esc(x.label)}${i === 0 ? '<i class="uc-flag">最省</i>' : ""}</td>
+      <td class="uc-plat">${esc(x.plat)}</td>
+      <td class="num">${price3(x.cny)}</td>
+      <td class="num">${tag}</td>
+    </tr>`;
+  }).join("");
+
+  const savePct = now > 0 && best.cny < now ? Math.round((now - best.cny) / now * 100) : 0;
+  return `<section class="usage-cmp">
+    <div class="uc-head"><h3>按你的实际用量折算</h3>
+      <span class="uc-sub">${esc(rangeLabel)} · 输入 ${fmtTok(inT)} · 缓存 ${fmtTok(cacheT)} · 输出 ${fmtTok(outT)}</span></div>
+    <p class="uc-lead">把上面这些 token 原样换成别的模型，要花多少钱 ——
+      ${now > 0
+        ? `你现在实际花了 <b>${fmtCny(now)}</b>${savePct > 0 ? `，最省的一种能少花 <b class="uc-hl">${savePct}%</b>` : "，已经是这个区间里最省的选法"}`
+        : "（这个区间没有可比的实扣金额）"}。</p>
+    <table class="uc-table"><thead><tr>
+      <th>模型</th><th>平台</th><th class="num">折算花费</th><th class="num">相比现在</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <p class="uc-note">只算 token 计费（输入 / 缓存命中 / 输出三档），不含套餐最低消费、图片与工具调用；
+      缓存写入按缓存命中价估算。模型能力并不等价，这里只回答「同样的量换一家要多少钱」，
+      不是让你把活都换给最便宜的那个。</p>
+  </section>`;
 }
 
 /* 定价与推荐独立轮询：时段切换 / 价格调整都能跟上（内容没变就不重绘，避免打断 hover） */
@@ -2049,7 +2143,14 @@ function bind() {
     state.rangeKey = b.dataset.days;
     state.rangeDays = rangeDays(state.rangeKey);
     syncRangeSeg();
-    await refreshAll(true);
+    /* 切区间要重新拉数据，别让上一档的数字装成新数字挂在那里 */
+    document.body.classList.add("ranging");
+    setSync("切换区间…");
+    try {
+      await refreshAll(true);
+    } finally {
+      document.body.classList.remove("ranging");
+    }
   });
 
   document.querySelectorAll(".chart-toggle input").forEach((r) => {

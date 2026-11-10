@@ -22,6 +22,7 @@ if _HERE not in sys.path:
 from core import catalog as model_catalog
 from core import store as local_store
 from core import drivers
+from core import grab
 
 if getattr(sys, "frozen", False):
     BASE_DIR   = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
@@ -2285,7 +2286,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                    "drivers": drivers.public_list(),
                                    "mode": PROVIDER_SOURCE["mode"]})
             if path == "/api/drivers":
-                return self._json({"ok": True, "drivers": drivers.public_list()})
+                return self._json({"ok": True, "drivers": drivers.public_list(),
+                                   "grab": grab.status()})
             if path == "/api/providers":
                 provs, err = load_providers()
                 if err:
@@ -2514,6 +2516,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 res = {"status": "error", "detail": str(e)[:200]}
             return self._json({"ok": True, "result": res})
+        if path == "/api/grab_cred":
+            # 起一个专属 Edge 登录窗口，登录完把登录态读回来（最长 ~100 秒）
+            did = str(payload.get("driver") or "").strip()
+            if did not in drivers.DRIVERS:
+                return self._json({"ok": False, "error": "未知平台"})
+            try:
+                res = grab.read_cred(did, drivers.meta(did),
+                                     timeout=int(payload.get("wait") or 95))
+            except Exception as e:
+                res = {"ok": False, "value": "", "note": str(e)[:200]}
+            # 请求本身成功，读没读到用 found 表达 —— 免得前端把「还没登录」当接口报错
+            return self._json({"ok": True, "found": bool(res.get("ok")),
+                               "value": res.get("value") or "",
+                               "note": res.get("note") or ""})
         if path == "/api/refresh":
             provs, err = load_providers()
             if err:

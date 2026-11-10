@@ -13,6 +13,9 @@ __pycache__/
 
 # ---------- 运行期配置与日志（本机状态，不是源码） ----------
 config.json
+# 「自动读取登录态」的 Edge 配置目录（含登录 cookie，绝不能入库）
+edge-profile*/
+grab_port.txt
 .dev_config.json
 .dev_usage.db*
 usage.db*

@@ -280,6 +280,9 @@ DRIVERS = {
         "note": "控制台给逐日逐模型用量；余额走公开 API /user/balance。",
         # 在官网控制台按 F12 → Console 粘贴这行，值会直接进剪贴板
         "grab": "copy(JSON.parse(localStorage.getItem('userToken')).value)",
+        # 自动读取：在页面里跑的纯取值表达式（不依赖 DevTools 的 copy()）
+        "probe": ("(function(){try{var t=JSON.parse(localStorage.getItem('userToken')||'{}');"
+                  "return (t&&t.value)||''}catch(e){return ''}})()"),
     },
     "kimi": {
         "label": "Kimi", "color": "#8a8f98", "capability": "detail",
@@ -288,6 +291,7 @@ DRIVERS = {
         "auth": [{"key": "refresh_token", "label": "refresh_token", "hint": "控制台登录态里的长期票据"}],
         "note": "票据只有 15 分钟有效期，会自动续期并落盘。",
         "grab": "copy(localStorage.getItem('refresh_token')||(document.cookie.match(/refresh_token=([^;]+)/)||[])[1]||'未找到')",
+        "probe": ("(function(){try{return localStorage.getItem('refresh_token')||''}catch(e){return ''}})()"),
     },
     "zhipu": {
         "label": "智谱 GLM", "color": "#3b6ef5", "capability": "detail",
@@ -296,6 +300,8 @@ DRIVERS = {
         "auth": [{"key": "jwt_token", "label": "bigmodel_token_production", "hint": "登录后的 cookie 值"}],
         "note": "用量取费用账单的实扣金额，余额取客户账户报表。",
         "grab": "copy((document.cookie.match(/bigmodel_token_production=([^;]+)/)||[])[1]||'未找到')",
+        # 这个 cookie 是 HttpOnly，document.cookie 读不到 → 走 CDP 的 Network.getCookies
+        "cookie_name": "bigmodel_token_production",
     },
     "openrouter": {
         "label": "OpenRouter", "color": "#6467f2", "capability": "balance_only",
@@ -375,6 +381,8 @@ def public_list():
             "capability": d["capability"], "login_url": d.get("login_url", ""),
             "site": d.get("site", ""), "auth": d.get("auth", []),
             "note": d.get("note", ""), "grab": d.get("grab", ""),
+            # 能不能自动从登录窗口读数（前端据此决定给不给「自动读取」按钮）
+            "probe": d.get("probe", ""), "cookie_name": d.get("cookie_name", ""),
         })
     order = {"detail": 0, "balance_only": 1, "catalog": 2}
     out.sort(key=lambda x: (order.get(x["capability"], 3), x["label"]))

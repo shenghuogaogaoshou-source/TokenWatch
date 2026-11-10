@@ -782,9 +782,14 @@ b, strong { font-weight:600; }
 .wiz-res { grid-column:1 / -1; font-size:10.5px; line-height:1.7; }
 .wiz-res.ok { color:var(--ok); }
 .wiz-res.err { color:var(--up); }
-.wiz-login { grid-column:1 / -1; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+.wiz-login { grid-column:1 / -1; display:block;
   padding:9px 10px; border:1px dashed var(--line); border-radius:8px; background:var(--panel-2); }
-.wiz-login p { margin:0; font-size:10px; color:var(--ink-3); line-height:1.6; flex:1 1 180px; }
+.wiz-login p { margin:0; font-size:10px; color:var(--ink-3); line-height:1.6; }
+.wiz-login-acts { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.wiz-login-note { font-size:10.5px; line-height:1.7; margin-top:8px; color:var(--ink-3); }
+.wiz-login-note:empty { display:none; }
+.wiz-login-note.ok { color:var(--ok); }
+.wiz-login-note.err { color:var(--warn); }
 
 .wiz-sum { display:flex; flex-direction:column; gap:8px; }
 .wiz-sum-row { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line);
@@ -818,3 +823,40 @@ b, strong { font-weight:600; }
   .mrow-tag, .mrow-ctx, .mrow-v, .mrow .mdot { display:none; }
   .pf-fields { grid-template-columns:1fr; }
 }
+
+/* ==========================================================================
+   定价页 · 按实际用量折算
+   ========================================================================== */
+.usage-cmp { margin-top:18px; padding:16px 18px; background:var(--panel);
+  border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow); }
+.uc-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:7px; }
+.uc-head h3 { font-size:13px; font-weight:600; letter-spacing:.01em; }
+.uc-sub { font-size:10.5px; color:var(--ink-3); }
+.uc-lead { font-size:12px; color:var(--ink-2); margin-bottom:12px; line-height:1.7; }
+.uc-lead b { color:var(--ink); font-variant-numeric:tabular-nums; }
+.uc-lead .uc-hl { color:var(--ok); }
+.uc-table { width:100%; border-collapse:collapse; }
+.uc-table th { font-size:9.5px; letter-spacing:.08em; color:var(--ink-3);
+  font-weight:500; text-align:left; padding:0 0 7px; border-bottom:1px solid var(--line); }
+.uc-table th.num, .uc-table td.num { text-align:right; }
+.uc-table td { padding:8px 0; border-bottom:1px solid var(--line-2); font-size:12px; vertical-align:middle; }
+.uc-table tr:last-child td { border-bottom:0; }
+.uc-table tr.best td { background:var(--accent-soft); }
+.uc-table tr.best td:first-child { padding-left:9px; border-radius:7px 0 0 7px; }
+.uc-table tr.best td:last-child { padding-right:9px; border-radius:0 7px 7px 0; }
+.uc-name { font-weight:500; }
+.uc-flag { font-style:normal; font-size:9px; color:var(--ok); margin-left:7px;
+  border:1px solid var(--ok); border-radius:999px; padding:0 5px; }
+.uc-plat { color:var(--ink-3); font-size:11px; }
+.uc-save { color:var(--ok); }
+.uc-more { color:var(--up); }
+.uc-same, .uc-na { color:var(--ink-3); }
+.uc-note { font-size:10px; color:var(--ink-3); margin-top:10px; line-height:1.7; }
+.uc-empty { font-size:11.5px; color:var(--ink-3); line-height:1.85; }
+
+/* 切区间时把旧数字压暗，避免「新范围配旧数」的错觉 */
+body.ranging .tape-v,
+body.ranging .kpi-v,
+body.ranging #trendChart,
+body.ranging #platformView,
+body.ranging #pricingPanel { opacity:.45; transition:opacity .12s ease; }

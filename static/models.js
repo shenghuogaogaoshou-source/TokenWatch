@@ -80,11 +80,26 @@ const MDL = (function () {
     return g ? g.label : driver;
   }
 
+  /* 目录 id 与账单/选择器里的名字经常不是同一个串（moonshot/kimi-k3 vs kimi-k3） */
+  function looseEq(a, b) {
+    const x = String(a || "").toLowerCase();
+    const y = String(b || "").toLowerCase();
+    if (!x || !y) return false;
+    if (x === y) return true;
+    const tx = x.split("/").pop();
+    const ty = y.split("/").pop();
+    return tx === ty || x.endsWith("/" + ty) || y.endsWith("/" + tx);
+  }
+
   /* 哪些已接入账户能提供这个模型：按驱动匹配，或账户显式指定了该模型 */
   function accountsFor(m) {
     const accs = S.accounts || [];
-    return accs.filter((a) =>
-      (a.driver === m.driver) || ((a.models || []).indexOf(m.id) >= 0));
+    return accs.filter((a) => {
+      const list = a.models || [];
+      /* 用户给这个账户圈过模型清单，就按清单说话（否则「只开放 2 个」还显示 9 个已接） */
+      if (list.length) return list.some((x) => looseEq(x, m.id));
+      return a.driver === m.driver;
+    });
   }
 
   function filtered() {

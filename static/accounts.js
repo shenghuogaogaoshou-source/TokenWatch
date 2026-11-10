@@ -117,7 +117,7 @@ const ACCT = (function () {
           esc(f.hint || "") + '" value=""></label>'
         )).join("") +
       "</div>" +
-      (d.login_url || d.grab ? loginBox(d) : "") +
+      (d.login_url || d.grab ? loginBoxHTML(d) : "") +
       '<p class="acct-save-tip">' + (acct ? "留空的字段表示不修改；填新值会覆盖。" : "凭据只写本机，不上传。") + "</p>" +
       '<div class="acct-res" id="acctRes"></div>';
 
@@ -355,20 +355,6 @@ const WIZ = (function () {
     return f;
   }
 
-  function loginBox(d) {
-    return '<div class="wiz-login">' +
-      "<p>" + (d.grab
-        ? "点开官网登录，然后在页面按 F12 → Console 粘贴这行命令，值会直接进剪贴板。"
-        : "填站点地址与 API Key 即可，无需登录。") + "</p>" +
-      (d.login_url
-        ? '<button type="button" class="btn btn-ghost btn-sm" data-open="' + esc(d.login_url) + '">去官网登录 ↗</button>'
-        : "") +
-      (d.grab
-        ? '<button type="button" class="btn btn-ghost btn-sm" data-copy="' + esc(d.grab) + '">复制取值命令</button>'
-        : "") +
-      "</div>";
-  }
-
   function renderForms() {
     const body = $id("wizBody");
     body.innerHTML = S.picked.map((id) => {
@@ -391,7 +377,7 @@ const WIZ = (function () {
             ' placeholder="' + esc(af.hint || "") + '" value="' +
             esc(f.fields[af.key] || "") + '"></label>').join("") +
           (d.note ? '<p class="wiz-note">' + esc(d.note) + "</p>" : "") +
-          loginBox(d) +
+          loginBoxHTML(d) +
           '<div class="wiz-acts">' +
             '<button type="button" class="btn btn-ghost btn-sm" data-test="' + esc(id) + '">测试连接</button>' +
             '<span class="pick-hint">可以只填一部分，空着的先跳过。</span>' +
@@ -591,7 +577,56 @@ const WIZ = (function () {
 })();
 window.WIZ = WIZ;
 
-/* 共用的「去官网登录 / 复制取值命令」按钮 */
+/* ============================================================
+   共用：凭据获取区（单个添加 / 账户设置 / 接入向导都用它）
+   ------------------------------------------------------------
+   有 probe / cookie_name 的平台给「自动读取」——后台起一个专属
+   Edge 登录窗口，登录完直接把票据读回来；
+   只认 API Key 的平台给「打开官网」。
+   ============================================================ */
+function loginBoxHTML(d) {
+  const auto = !!(d.probe || d.cookie_name);
+  const key = (d.auth && d.auth[0] && d.auth[0].key) || "";
+  const tip = auto
+    ? "点「自动读取登录态」会弹出一个登录窗口：在那里面登录一次，凭据自动带回来（下次不用再登）。读不到也可以手动复制命令。"
+    : d.login_url
+      ? "到这个页面登录后，在「API Keys」里新建一个 Key 复制过来。"
+      : "填站点地址与 API Key 即可。";
+  return '<div class="wiz-login">' +
+    "<p>" + esc(tip) + "</p>" +
+    '<div class="wiz-login-acts">' +
+      (auto
+        ? '<button type="button" class="btn btn-primary btn-sm" data-grab="' + esc(d.id) +
+          '" data-key="' + esc(key) + '">自动读取登录态</button>'
+        : "") +
+      (d.login_url
+        ? '<button type="button" class="btn btn-ghost btn-sm" data-open="' + esc(d.login_url) +
+          '">' + (auto ? "手动打开官网 ↗" : "打开官网 ↗") + "</button>"
+        : "") +
+      (d.grab
+        ? '<button type="button" class="btn btn-ghost btn-sm" data-copy="' + esc(d.grab) + '">复制取值命令</button>'
+        : "") +
+    "</div>" +
+    '<div class="wiz-login-note" data-grabnote></div>' +
+    "</div>";
+}
+
+/* 把读到的值填进当前卡片里对应的输入框 */
+function fillGrabbedValue(btn, key, value) {
+  const scope = btn.closest(".wiz-item, .modal-body, .modal") || document;
+  const byKey = key
+    ? scope.querySelector('[id="fld_' + key + '"], [data-k="' + key + '"]')
+    : null;
+  const empty = [...scope.querySelectorAll("input")]
+    .find((x) => !x.value.trim() && x.type !== "hidden" && x.id !== "acctLabel");
+  const input = byKey || empty;
+  if (!input) return false;
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus();
+  return true;
+}
+
 function bindLoginBox() {
   document.querySelectorAll("[data-open]").forEach((b) => {
     if (b.dataset.bound) return;
@@ -615,4 +650,43 @@ function bindLoginBox() {
       }
     });
   });
+  document.querySelectorAll("[data-grab]").forEach((b) => {
+    if (b.dataset.bound) return;
+    b.dataset.bound = "1";
+    b.addEventListener("click", () => grabInto(b));
+  });
+}
+
+/* 自动读取：请求会挂最多 ~100 秒（等用户在登录窗口里完成登录） */
+async function grabInto(btn) {
+  if (btn.dataset.busy) return;
+  const note = (btn.closest(".wiz-login") || {}).querySelector
+    ? btn.closest(".wiz-login").querySelector("[data-grabnote]")
+    : null;
+  const say = (msg, cls) => {
+    if (!note) return;
+    note.className = "wiz-login-note" + (cls ? " " + cls : "");
+    note.textContent = msg || "";
+  };
+  const label = btn.textContent;
+  btn.dataset.busy = "1";
+  btn.classList.add("loading");
+  btn.textContent = "等待登录…";
+  say("已弹出登录窗口，请在里面完成登录（不要关窗口）。");
+  try {
+    const j = await postJSON("/api/grab_cred", { driver: btn.dataset.grab }, 130000);
+    if (j.found && j.value) {
+      const filled = fillGrabbedValue(btn, btn.dataset.key, j.value);
+      say((filled ? "已填入" : "已读到，但没找到输入框") + " · " + (j.note || ""), "ok");
+      toast("已读取凭据，点「测试连接」确认能通");
+    } else {
+      say(j.note || "还没读到，登录完成后可以再点一次", "err");
+    }
+  } catch (e) {
+    say("读取失败：" + e.message, "err");
+  } finally {
+    delete btn.dataset.busy;
+    btn.classList.remove("loading");
+    btn.textContent = label;
+  }
 }
