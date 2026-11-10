@@ -895,7 +895,8 @@ function buildCard(p, i) {
   } else {
     const st = su.pending && su.pending.status;
     const det = su.pending && su.pending.detail;
-    const why = !su.pending ? "本地记录"
+    const why = p._local_usage ? "官网这次没返回这家数据 · 用本机存档补上"
+      : !su.pending ? "本地记录"
       : st === "nokey" ? "官网未配置凭据 · 本地记录"
       : (st === "quota" || (su.pending && su.pending.mode === "quota"))
         ? "该平台仅有套餐额度（见上方余额）· 明细用本地记录"
@@ -905,7 +906,8 @@ function buildCard(p, i) {
     const fxr = (state.cfg && state.cfg.usd_cny) || 7.1;
     stripWrap.appendChild(el("div", "strip-src muted",
       why + (st === "error" && det ? "（" + String(det).slice(0, 60) + "）" : "") +
-      " ｜ 本地记录原为美元，已按 ¥" + fxr + "/USD 折算"));
+      (p._local_usage ? " ｜ 本机存档是历次采集攒下来的，不是实时值"
+                      : " ｜ 本地记录原为美元，已按 ¥" + fxr + "/USD 折算")));
   }
   stripWrap.appendChild(strip);
   card.appendChild(stripWrap);

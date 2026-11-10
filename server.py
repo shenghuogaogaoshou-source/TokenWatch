@@ -1966,6 +1966,9 @@ def platform_usage_all(provs, days, force=False):
         PLATFORM_CACHE["t"] = time.time()
         PLATFORM_CACHE["data"] = ordered
         PLATFORM_CACHE["days"] = days
+    # 顺手把这次拿到的逐日用量落档：官网的可查窗口有限（有的只给最近几个月），
+    # 攒下来的存档才是「半年 / 全年」的底气
+    _archive_usage(ordered, provs)
     return ordered
 
 
@@ -2228,6 +2231,83 @@ def pricing_snapshot(observed=None):
     }
 
 
+# ---------------- 本地用量存档 ----------------
+def _archive_usage(per_provider, provs):
+    """把这次从官网拿到的逐日用量落一份本地档。
+
+    只存「按日合计」：各平台给的逐模型明细字段互不一样，存两套口径迟早对不上；
+    按日合计足够支撑「半年 / 全年」的总量与趋势，模型维度仍以官网窗口内为准。
+    upsert 语义，同一天重复采集不会翻倍。
+    """
+    for p in provs:
+        po = per_provider.get(p.get("id"))
+        if not po or po.get("status") not in ("ok", "empty"):
+            continue
+        rows = []
+        for d, r in (po.get("days") or {}).items():
+            if not isinstance(r, dict):
+                continue
+            rows.append({
+                "date": d, "model": local_store.AGG_MODEL,
+                "requests": r.get("requests") or 0,
+                "input": r.get("input") or 0,
+                "output": r.get("output") or 0,
+                "cache_read": r.get("cache_read") or 0,
+                "cache_write": r.get("cache_creation") or 0,
+                "cost_cny": r.get("cost") or 0,
+                "cost_native": r.get("cost") or 0,
+                "currency": "CNY",
+            })
+        if rows:
+            try:
+                local_store.upsert_usage(p["id"], rows, source="platform")
+            except Exception:
+                pass          # 存档失败不能影响主流程
+
+
+def _has_usage(po):
+    """这一份 usage 里到底有没有量（CC Switch 的空壳记录会被判成没有）。"""
+    if not po:
+        return False
+    t = po.get("totals") or {}
+    return bool((t.get("cost") or 0) or (t.get("requests") or 0)
+                or (t.get("input") or 0) or (t.get("output") or 0)
+                or (t.get("cache_read") or 0) or (t.get("cache_creation") or 0))
+
+
+def _local_range_usage(pid, days):
+    """读本地存档，拼成与官网一致的结构（status / totals / days / models）。"""
+    end = datetime.date.today()
+    start = end - datetime.timedelta(days=max(0, days - 1))
+    try:
+        agg = local_store.aggregate(start.isoformat(), end.isoformat(), [pid])
+    except Exception:
+        return None
+    t = (agg.get("by_account") or {}).get(pid)
+    if not t:
+        return None
+    if not (t.get("requests") or t.get("input") or t.get("output") or t.get("cost")):
+        return None
+    days_map = {}
+    for d, r in (agg.get("by_date") or {}).items():
+        days_map[d] = {"requests": r["requests"], "input": r["input"], "output": r["output"],
+                       "cache_read": r["cache_read"], "cache_creation": r["cache_write"],
+                       "cost": round(r["cost"], 6)}
+    models = []
+    for m, r in (agg.get("by_model") or {}).items():
+        if m == local_store.AGG_MODEL:
+            continue
+        models.append({"model": m, "requests": r["requests"], "input": r["input"],
+                       "output": r["output"], "cache_read": r["cache_read"],
+                       "cache_creation": r["cache_write"], "cost": round(r["cost"], 6)})
+    return {"status": "ok", "mode": "usage", "source": "local",
+            "note": "官网这次没返回该区间数据，用本机存档补上",
+            "totals": {"requests": t["requests"], "input": t["input"], "output": t["output"],
+                       "cache_read": t["cache_read"], "cache_creation": t["cache_write"],
+                       "cost": round(t["cost"], 6)},
+            "days": days_map, "models": models}
+
+
 # ---------------- HTTP 服务 ----------------
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -2313,6 +2393,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if err:
                     return self._json({"ok": False, "error": err})
                 usage = collect_usage(provs, days)
+                _archive_usage(usage.get("per_provider") or {}, provs)
                 balances = balances_all(provs, force=provider_changed(provs))
                 price_map = price_lookup()
                 out_providers = []
@@ -2324,6 +2405,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if p.get("_acct"):        # 前端据此显示「账户设置」入口
                         item["_acct"] = True
                         item["capability"] = p.get("capability")
+                    if p.get("_acct") and not _has_usage(po):
+                        # 账户模式下 /api/data 里的 usage 是 CC Switch 的旧本地记录（通常为空）。
+                        # 有本机存档就带上：票据失效 / 官网断供时，至少还能看到攒下来的历史。
+                        lu = _local_range_usage(p["id"], days)
+                        if lu:
+                            po = lu
+                            item["_local_usage"] = True
                     item["usage"] = po if po else None
                     item["balance"] = balances.get(p["id"]) or {"status": "error", "detail": "未查询"}
                     # 估算（人民币 / 百万 token）
