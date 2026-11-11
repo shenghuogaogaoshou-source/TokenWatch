@@ -860,3 +860,14 @@ body.ranging .kpi-v,
 body.ranging #trendChart,
 body.ranging #platformView,
 body.ranging #pricingPanel { opacity:.45; transition:opacity .12s ease; }
+
+/* 余额能撑几天 */
+.bal-runway { font-size:10px; color:var(--ink-3); margin-top:5px; line-height:1.5; }
+.bal-runway b { font-weight:560; color:var(--ink-2); font-variant-numeric:tabular-nums; }
+.bal-runway.warn b { color:var(--warn); }
+
+/* 「全部测一遍」写在卡片上的结果行 */
+.p-test { font-size:10px; line-height:1.6; margin:8px 0 0; padding:5px 8px;
+  border-radius:7px; background:var(--panel-2); color:var(--ink-3); }
+.p-test.ok { color:var(--ok); background:var(--ok-soft); }
+.p-test.err { color:var(--up); background:var(--up-soft); }

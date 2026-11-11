@@ -229,7 +229,7 @@ function unifiedTotals() {
   const u = (state.platform && state.platform.usage) || {};
   const n = Math.max(1, state.rangeDays || 1);
   const from = localISO(n - 1);            // 区间最早一天（含）
-  const t = { cost: 0, tok: 0, req: 0, platN: 0, localN: 0,
+  const t = { cost: 0, tok: 0, req: 0, platN: 0, localN: 0, localCost: 0,
               input: 0, output: 0, cache_read: 0, cache_creation: 0 };
   const acc = (rec) => {
     t.cost += rec.cost || 0;
@@ -257,8 +257,10 @@ function unifiedTotals() {
   const locals = (state.dataMain && state.dataMain.providers) || [];
   for (const p of locals) {
     if (covered.has(p.id) || !p.usage || !p.usage.totals) continue;
-    acc(usageFiltered(p.usage).totals);
+    const lt = usageFiltered(p.usage).totals;
+    acc(lt);
     t.localN++;
+    t.localCost += lt.cost || 0;
   }
   return t;
 }
@@ -392,6 +394,7 @@ function renderAll() {
   renderDetail();
   renderExpiryStrip();
   notifyLowBalance();
+  notifyExpiringCreds();
 }
 
 /* 模型页勾选变化 → 重算过滤缓存并整页重绘（数据没变，只是口径变了） */
@@ -502,10 +505,14 @@ function renderTape() {
   const altEl = $("#tapeCost7Cny");
   if (altEl) {
     /* 主数字已经是人民币，这一行只交代口径：有没有掺本地记录、掺的那部分怎么来的 */
+    const fy = fxSummary(mergedProviders());
     altEl.textContent = tot.cost > 0
-      ? (tot.localN
-          ? "含 " + tot.localN + " 家本机记录（原为美元，已按 ¥" + fx + "/USD 折算）"
-          : "全部为官网账户实际扣费口径")
+      ? (fy && fy.noStrCost > 0
+          ? "其中 " + money(fy.noStrCost) + " 来自 " + fy.noStr + " 家无模型明细的平台（整笔计入，未按模型筛选）"
+          : tot.localCost > 0.005
+            /* 只有本机记录真的出了钱才提它：不然「含 1 家本机记录」会让人以为这钱是折出来的 */
+            ? "含 " + tot.localN + " 家本机记录 " + money(tot.localCost) + "（原为美元，已按 ¥" + fx + "/USD 折算）"
+            : "全部为官网账户实际扣费口径")
       : (anyPlat ? "官网侧" + rt + "暂无消耗记录" : "暂无消耗记录");
   }
   const srcF = tot.platN
@@ -810,6 +817,7 @@ function buildCard(p, i) {
   const u = p.usage || zeroUsage();
   const b = p.balance || {};
   const card = el("article", "pcard");
+  card.dataset.pid = p.id;         /* 「全部测一遍」要按 id 回填结果 */
   card.style.animationDelay = (i * 70) + "ms";
   card.style.setProperty("--acc", vis.acc);
   card.style.setProperty("--acc-soft", vis.soft);
@@ -988,6 +996,19 @@ function lowFor(name) {
   return parseFloat(state.cfg && state.cfg.low_balance_cny) || 0;
 }
 
+/* 近 7 个自然日的日均消耗（不看关注模型筛选：余额能撑几天跟你看哪几个模型无关） */
+function recentDailyCost(p) {
+  const raw = ((state.platform && state.platform.usage) || {})[p.id];
+  const usePlat = raw && raw.status === "ok" && raw.mode === "usage" && raw.days;
+  const days = (usePlat ? raw.days : ((p.usage && p.usage.days) || {})) || {};
+  const from = localISO(6);
+  let sum = 0;
+  for (const d of Object.keys(days)) {
+    if (d >= from) sum += (days[d] && days[d].cost) || 0;
+  }
+  return sum / 7;
+}
+
 function buildBalance(p, b) {
   const wrap = el("div");
   if (b.status === "ok") {
@@ -1007,6 +1028,16 @@ function buildBalance(p, b) {
           lowFlag ? `<span class="low-tag" title="${perProv ? "该提供商单独设置的预警阈值" : "全局预警阈值"}">低于预警 ¥${low}</span>` : ""}</div>
         <div class="bal-val${lowFlag ? " warn" : ""}">${money(cnyOf(main))}<small>CNY</small></div>`;
       div.appendChild(box);
+      /* 余额能撑几天：比「还剩 ¥23.04」有用得多的一句话 */
+      const daily = recentDailyCost(p);
+      if (daily >= 0.05 && cnyTotal > 0) {
+        const left = cnyTotal / daily;
+        const txt = left >= 100 ? "99+ 天" : left < 1 ? "不到 1 天" : Math.round(left) + " 天";
+        const run = el("div", "bal-runway" + (left < 3 ? " warn" : ""));
+        run.innerHTML = "按近 7 天日均 " + esc(money(daily)) + " 算，还能撑 <b>" + esc(txt) + "</b>";
+        run.title = "余额 " + money(cnyTotal) + " ÷ 日均 " + money(daily);
+        div.appendChild(run);
+      }
       const pills = el("div", "bal-pills");
       for (const it of b.items || []) {
         pills.appendChild(el("span", "pill",
@@ -1289,16 +1320,21 @@ function platformFx(pid) {
 function fxSummary(provs) {
   const sel = selModelSet();
   if (!sel.size) return null;
-  let hitModel = 0, noStr = 0, dropped = 0;
+  let hitModel = 0, noStr = 0, dropped = 0, noStrCost = 0;
   for (const p of provs) {
     const u = p.usage || {};
-    if (u._fnostr) { noStr++; continue; }
+    if (u._fnostr) {
+      noStr++;
+      /* 这些钱是整笔计入的，没被模型筛选碰过 —— KPI 上要把它单列出来 */
+      noStrCost += (u.totals && u.totals.cost) || 0;
+      continue;
+    }
     if (typeof u._fhit === "number") {
       hitModel += u._fhit;
       if (u._fhit === 0) dropped++;
     }
   }
-  return { n: sel.size, hitModel, noStr, dropped, list: selModelList() };
+  return { n: sel.size, hitModel, noStr, noStrCost, dropped, list: selModelList() };
 }
 
 /* 明细卡顶部的过滤提示条：让人一眼看出「为什么数字比预期小」 */
@@ -1726,8 +1762,106 @@ function notifyLowBalance() {
   }
 }
 
-function renderApiTable(provs, opts) {
-  opts = opts || {};
+/* 票据快到期时提醒一次。智谱那种 7 天的 JWT，等它失效再变红就晚了：
+   到时候这一家直接归零，用户只会觉得「数据坏了」。同一家一天只提醒一次。 */
+function notifyExpiringCreds() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const creds = (state.platform && state.platform.creds) || {};
+  const today = localISO(0);
+  const KEY = "tokenwatch-cred-notified";
+  let done = {};
+  try { done = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { done = {}; }
+  let changed = false;
+  for (const kind of Object.keys(creds)) {
+    const c = creds[kind] || {};
+    const ex = c.expiry || {};
+    if (!c.configured) continue;
+    if (ex.level !== "urgent" && ex.level !== "expired") continue;
+    const k = kind + ":" + today;
+    if (done[k]) continue;
+    done[k] = 1;
+    changed = true;
+    const label = c.label || kind;
+    const body = ex.level === "expired"
+      ? label + " 的登录票据已失效，这一家现在只能看本地存档。到「账户 → 账户设置 → 重新获取」"
+      : label + " 的票据还剩 " + Math.max(0, ex.days) + " 天，到期后这一家会归零，建议现在重新获取";
+    try {
+      new Notification("TokenWatch · 票据" + (ex.level === "expired" ? "已失效" : "快到期"), {
+        body, tag: k,
+      });
+    } catch (e) { /* 通知失败不影响主流程 */ }
+  }
+  if (changed) {
+    try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) { /* 忽略 */ }
+  }
+}
+
+/* 把已接入的账户挨个测一遍。以前要看谁失效得一张卡点一次，三家就点三次、
+   看三个弹窗；现在一条命令跑完，结果直接写在卡片上。
+   串行而不是并发：DeepSeek 连续请求会 429，同时打三次等于自找限流。 */
+async function testAllAccounts() {
+  const btn = $("#btnTestAll");
+  if (!btn || btn.dataset.busy) return;
+  const provs = (state.providers || []).filter((p) => p._acct);
+  if (!provs.length) { toast("还没有可以测试的账户"); return; }
+  const label = btn.textContent;
+  btn.dataset.busy = "1";
+  btn.classList.add("loading");
+  let okN = 0, badN = 0, planN = 0;
+  const badList = [];
+  try {
+    for (let i = 0; i < provs.length; i++) {
+      const p = provs[i];
+      btn.textContent = "测试中 " + (i + 1) + "/" + provs.length;
+      const card = document.querySelector('#providers .pcard[data-pid="' + CSS.escape(p.id) + '"]');
+      const line = testLineOf(card);
+      if (line) { line.className = "p-test"; line.textContent = p.name + "：测试中…"; }
+      try {
+        const j = await postJSON("/api/account_test",
+          { driver: p.driver || p.kind, id: p.id }, 60000);
+        const r = (j && j.result) || {};
+        if (r.status === "ok" || r.status === "empty") {
+          okN++;
+          const bal = (r.balance && r.balance.items && r.balance.items[0]) || null;
+          if (line) {
+            line.className = "p-test ok";
+            line.textContent = "已连通" + (bal ? " · 余额 " + bal.total + " " + (bal.currency || "CNY") : "");
+          }
+        } else if (r.status === "unavailable") {
+          planN++;
+          if (line) { line.className = "p-test dim"; line.textContent = r.detail || "缺少凭据"; }
+        } else {
+          badN++; badList.push(p.name);
+          if (line) { line.className = "p-test err"; line.textContent = r.detail || "连接失败"; }
+        }
+      } catch (e) {
+        badN++; badList.push(p.name);
+        if (line) { line.className = "p-test err"; line.textContent = e.message; }
+      }
+    }
+  } finally {
+    btn.textContent = label;
+    btn.classList.remove("loading");
+    delete btn.dataset.busy;
+  }
+  toast(badN
+    ? okN + " 家通 / " + badN + " 家没通：" + badList.join("、")
+    : okN + " 家全部连通" + (planN ? "（另有 " + planN + " 家没有可测接口）" : ""), !!badN);
+}
+
+/* 在卡片里找（或建）一行测试结果 */
+function testLineOf(card) {
+  if (!card) return null;
+  let line = card.querySelector(".p-test");
+  if (!line) {
+    line = el("p", "p-test");
+    const foot = card.querySelector(".p-foot");
+    if (foot) card.insertBefore(line, foot); else card.appendChild(line);
+  }
+  return line;
+}
+
+function renderApiTable(provs, opts) {  opts = opts || {};
   const rows = [];
   for (const p of provs) {
     const u = p.usage || zeroUsage();
@@ -2088,6 +2222,8 @@ function schedulePricing() {
 function bind() {
   $("#btnTheme").addEventListener("click", toggleTheme);
   $("#btnRefresh").addEventListener("click", () => refreshAll(false));
+  const ta = $("#btnTestAll");
+  if (ta) ta.addEventListener("click", testAllAccounts);
   $("#btnSettings").addEventListener("click", openSettings);
   $("#btnCloseSettings").addEventListener("click", closeSettings);
   $("#btnCancelSettings").addEventListener("click", closeSettings);
@@ -2096,8 +2232,17 @@ function bind() {
     if (e.target.id === "settingsModal") closeSettings();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("#settingsModal").hidden) closeSettings();
-    if (e.key === "Escape" && !$("#platformModal").hidden) closePlatformCreds();
+    if (e.key !== "Escape") return;
+    /* 从最上层的弹窗开始关：模型选择器 → 向导 → 账户 → 设置 / 平台凭据。
+       以前只有后面两个响应 ESC，其余按了没反应，像是卡住了。 */
+    const top = [
+      ["pickModal", () => window.PICKER && window.PICKER.close()],
+      ["wizModal", () => window.WIZ && window.WIZ.close()],
+      ["acctModal", () => window.ACCT && window.ACCT.close()],
+      ["platformModal", closePlatformCreds],
+      ["settingsModal", closeSettings],
+    ].find(([id]) => { const m = $("#" + id); return m && !m.hidden; });
+    if (top) { e.preventDefault(); top[1](); }
   });
 
   const pc = $("#btnPlatformCreds");
