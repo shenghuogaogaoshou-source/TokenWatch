@@ -24,6 +24,9 @@ const PICKER = (function () {
     title: "",
     hint: "",
     driver: "",               // 只显示该驱动的模型（可选）
+    live: [],                 // 站点实际提供的模型名（中转站用，不走目录）
+    liveOnly: false,          // true = 只列站点自己的模型，不掺目录
+    allowCustom: false,       // 允许手动敲模型名
   };
 
   const esc = (s) => String(s == null ? "" : s)
@@ -54,11 +57,16 @@ const PICKER = (function () {
   }
 
   function pool() {
+    /* 中转站：只列站点自己说它有哪些模型。目录里那一堆是别人的菜单，
+       在上面勾选对用户毫无意义（他的站点可能根本没有 gpt-5.2）。 */
+    if (S.liveOnly) {
+      return S.live.map((id) => ({
+        id, name: id, driver: "", vendor: "站点", cny: null, __live: true,
+      }));
+    }
     const all = (DATA && DATA.models) || [];
     if (!S.driver) return all;
     const mine = all.filter((m) => m.driver === S.driver);
-    /* 该驱动在目录里没有模型（中转站、自定义站点）时回退全部，
-       否则会给出一个空列表，看起来像坏了 */
     return mine.length ? mine : all;
   }
 
@@ -100,8 +108,8 @@ const PICKER = (function () {
   function renderChips() {
     const host = $id("pickVendors");
     if (!host) return;
-    /* 已经限定在某个平台时，再给一排厂商 chips 只会出现「全部 9 / Kimi 9」这种废话 */
-    if (S.driver) { host.hidden = true; host.innerHTML = ""; return; }
+    /* 已经限定在某个平台 / 只列站点模型时，再给一排厂商 chips 只是废话 */
+    if (S.driver || S.liveOnly) { host.hidden = true; host.innerHTML = ""; return; }
     host.hidden = false;
     const src = pool();
     const counts = {};
@@ -125,18 +133,22 @@ const PICKER = (function () {
     const rows = filtered();
     const slice = rows.slice(0, S.limit);
     if (!rows.length) {
-      host.innerHTML = '<div class="pick-empty">' +
-        (pool().length ? "没有符合条件的模型，换个关键词试试。" :
-          "目录还没读到，检查网络后重试。") + "</div>";
+      host.innerHTML = '<div class="pick-empty">' + (S.liveOnly
+        ? "这个站点没返回模型清单。<br>用上面的输入框手动加一个模型名，或者先在站点里确认 /v1/models 是否可用。"
+        : (pool().length ? "没有符合条件的模型，换个关键词试试。" :
+          "目录还没读到，检查网络后重试。")) + "</div>";
       return;
     }
     host.innerHTML = slice.map((m) => {
       const on = pickedOf(m);
       const pin = (m.cny || {}).in, pout = (m.cny || {}).out;
-      return '<label class="pick-row' + (on ? " on" : "") + '" data-id="' + esc(m.id) + '">' +
+      /* 站点模型的名字就是 id，再重复一遍没有信息量 */
+      const sub = m.__live ? "" : '<small>' + esc(m.id) + "</small>";
+      return '<label class="pick-row' + (on ? " on" : "") + '" data-id="' + esc(m.id) + '"' +
+        (m.__live ? ' title="站点没有给出单价，按站点计费"' : "") + ">" +
         '<input type="checkbox"' + (on ? " checked" : "") + ">" +
-        '<span class="pick-n"><b>' + esc(m.name) + "</b><small>" + esc(m.id) + "</small></span>" +
-        '<span class="pick-d">' + esc(labelOf(m.driver)) + "</span>" +
+        '<span class="pick-n"><b>' + esc(m.name) + "</b>" + sub + "</span>" +
+        '<span class="pick-d">' + esc(m.__live ? "站点" : labelOf(m.driver)) + "</span>" +
         '<span class="pick-p"><b>' + fmtPrice(pin) + "</b><small>入</small></span>" +
         '<span class="pick-p"><b>' + fmtPrice(pout) + "</b><small>出</small></span>" +
         "</label>";
@@ -178,6 +190,9 @@ const PICKER = (function () {
     S.vendor = "";
     S.limit = 100;
     S.driver = opts.driver || "";
+    S.live = (opts.liveModels || []).map(String);
+    S.liveOnly = !!opts.liveOnly;
+    S.allowCustom = !!opts.allowCustom;
     S.title = opts.title || "选择模型";
     S.hint = opts.hint || "";
     S.onSave = opts.onSave || null;
@@ -189,9 +204,21 @@ const PICKER = (function () {
     $id("pickTitle").textContent = S.title;
     $id("pickHint").textContent = S.hint || "空着不选 = 不限制，显示该来源的全部模型。";
     const q = $id("pickSearch");
-    if (q) q.value = "";
+    if (q) {
+      q.value = "";
+      q.placeholder = S.liveOnly ? "搜索这个站点提供的模型"
+        : "搜索模型名或厂商，例如 claude / 通义 / gpt";
+    }
+    const crow = $id("pickCustomRow");
+    if (crow) crow.hidden = !S.allowCustom;
     mask.hidden = false;
     renderCount();
+    if (S.liveOnly) {
+      /* 站点模型不依赖目录，别为了它去拉 466 条 */
+      renderChips();
+      renderList();
+      return;
+    }
     $id("pickList").innerHTML = '<div class="pick-empty">正在读取模型目录…</div>';
 
     ensure().then(() => {
@@ -201,6 +228,21 @@ const PICKER = (function () {
     }).catch((e) => {
       $id("pickList").innerHTML = '<div class="pick-empty">目录读取失败：' + esc(e.message) + "</div>";
     });
+  }
+
+  function addCustom() {
+    const inp = $id("pickCustom");
+    if (!inp) return;
+    const v = inp.value.trim();
+    if (!v) return;
+    if (!S.live.includes(v)) S.live.push(v);
+    S.sel.add(v);
+    inp.value = "";
+    S.q = "";
+    const q = $id("pickSearch");
+    if (q) q.value = "";
+    renderList();
+    renderCount();
   }
 
   function close() {
@@ -233,6 +275,13 @@ const PICKER = (function () {
       S.sel.clear();
       renderList();
       renderCount();
+    });
+    /* 手动加模型名：中转站常把模型改叫 gpt-5.2-codex 之类，目录里永远查不到 */
+    const addBtn = $id("pickCustomAdd");
+    if (addBtn) addBtn.addEventListener("click", addCustom);
+    const cin = $id("pickCustom");
+    if (cin) cin.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); addCustom(); }
     });
     const cn = $id("pickCancel");
     if (cn) cn.addEventListener("click", close);

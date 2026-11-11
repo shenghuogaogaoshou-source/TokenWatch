@@ -521,22 +521,15 @@ const WIZ = (function () {
     body.querySelectorAll("[data-pick]").forEach((b) => {
       b.addEventListener("click", () => {
         const a = S.saved.find((x) => x.id === b.dataset.pick);
-        if (!a || !window.PICKER) return;
-        window.PICKER.open({
-          title: "「" + a.label + "」开放哪些模型",
-          hint: "只影响标注与来源推荐，不作采集限制。空着 = 不限制。",
-          selected: a.models || [],
-          onSave: async (arr) => {
-            try {
-              const j = await postJSON("/api/account_models", { id: a.id, models: arr });
-              if (!j.ok) throw new Error(j.error || "保存失败");
-              a.models = arr;
-              b.closest(".wiz-sum-row").querySelector(".wz-m").textContent =
-                arr.length ? arr.length + " 个模型" : "不限模型";
-              toast(arr.length ? "已记下 " + arr.length + " 个模型" : "已设为不限制");
-            } catch (e) { toast("保存失败：" + e.message); }
-          },
-        });
+        if (!a || !window.openModelPickFor) return;
+        /* 走和账户卡同一个入口：中转站会先去问站点有哪些模型 */
+        window.openModelPickFor(
+          { id: a.id, name: a.label, driver: a.driver }, a.models || [],
+          (arr) => {
+            a.models = arr;
+            b.closest(".wiz-sum-row").querySelector(".wz-m").textContent =
+              arr.length ? arr.length + " 个模型" : "不限模型";
+          });
       });
     });
   }

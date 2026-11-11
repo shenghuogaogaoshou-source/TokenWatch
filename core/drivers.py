@@ -129,8 +129,13 @@ def fetch_relay(cred, days):
     if not base.startswith(("http://", "https://")):
         base = "https://" + base
     h = {"Authorization": "Bearer " + key}
+    # totals / models / days 必须一开始就齐：只有「拿到日志」那一步才补，
+    # 站点不开日志时会走到 out["totals"]["cost"] 直接 KeyError —— 中转站整条链路曾经因此全挂。
     out = {"status": "ok", "mode": "usage", "source": "中转站 /api/user/self",
-           "checked_at": _now(), "capability": "balance_only"}
+           "checked_at": _now(), "capability": "balance_only",
+           "totals": {"requests": 0, "input": 0, "output": 0,
+                      "cache_read": 0, "cache_write": 0, "cost": 0.0},
+           "models": [], "days": {}, "model_days": {}}
 
     quota_per_unit = 500000.0          # New API 默认：1 美元 = 500000 quota
     try:
@@ -195,7 +200,7 @@ def fetch_relay(cred, days):
         rows = logs.get("data") or []
         if isinstance(rows, dict):
             rows = rows.get("items") or rows.get("data") or []
-        by_day, by_model = {}, {}
+        by_day, by_model, model_days = {}, {}, {}
         for r in rows if isinstance(rows, list) else []:
             ts = r.get("created_at") or 0
             day = datetime.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d") if ts else ""
@@ -216,9 +221,17 @@ def fetch_relay(cred, days):
             mr["requests"] += 1
             mr["input"] += pt
             mr["output"] += ct
+            # 逐日逐模型：没有这个，「只看我选的那几个模型」就过滤不了中转站的量
+            md = model_days.setdefault(mname, {})
+            dr = md.setdefault(day, {"cost": 0.0, "requests": 0, "input": 0, "output": 0})
+            dr["cost"] += cost
+            dr["requests"] += 1
+            dr["input"] += pt
+            dr["output"] += ct
         if by_day:
             out["days"] = by_day
             out["models"] = list(by_model.values())
+            out["model_days"] = model_days
             out["totals"].update({
                 "requests": sum(v["requests"] for v in by_day.values()),
                 "input": sum(v["input"] for v in by_day.values()),

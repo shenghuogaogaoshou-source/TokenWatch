@@ -940,7 +940,11 @@ def load_platform_creds():
                 raw = json.load(f)
             if isinstance(raw, dict):
                 for k, v in raw.items():
-                    if k in PLATFORM_SPEC and isinstance(v, dict):
+                    # ⚠️ 这里曾经只放行 PLATFORM_SPEC 里的三家，导致「账户模式」下
+                    # 按账户 id 存的凭据（acct-relay-xxx、OpenRouter、硅基流动…）
+                    # 每次进程重启读回来就被过滤掉 —— 表现是刚加完能用，重启后一律
+                    # 「填站点地址与 API Key」。账户 id 一律要放行。
+                    if isinstance(v, dict) and (k in PLATFORM_SPEC or k.startswith("acct-")):
                         d[k] = {kk: str(vv) for kk, vv in v.items()
                                 if isinstance(vv, (str, int, float))}
     except Exception as e:
@@ -2541,6 +2545,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._account_write(payload)
         if path == "/api/account_models":
             return self._account_models(payload)
+        if path == "/api/relay_models":
+            return self._relay_models(payload)
         if path == "/api/account_test":
             return self._account_test(payload)
         if path == "/api/platform_creds":
@@ -2716,6 +2722,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
         rec["models"] = clean
         local_store.upsert_account(rec)
         return self._json({"ok": True, "id": aid, "models": clean})
+
+    def _relay_models(self, payload):
+        """现拉一个中转站到底提供哪些模型。
+
+        账户级「选择开放模型」必须用这个，而不是拿 OpenRouter 目录凑 ——
+        目录里没有用户站点自己的模型名（很多中转站会改名、加私有模型），
+        拿目录去选等于让用户在别人的菜单上点菜。
+        """
+        aid = str(payload.get("id") or "").strip()
+        rec = local_store.get_account(aid)
+        if not rec:
+            return self._json({"ok": False, "error": "账户不存在"})
+        if (rec.get("driver") or "") != "relay":
+            return self._json({"ok": True, "models": [], "source": "",
+                               "note": "只有中转站需要现拉，其它平台用目录"})
+        cred = dict(load_platform_creds().get(aid) or {})
+        base = str(cred.get("base_url") or "").strip().rstrip("/")
+        key = str(cred.get("api_key") or "").strip()
+        ids, note = [], ""
+        if not (base and key):
+            return self._json({"ok": True, "models": [], "source": "relay", "note": "",
+                               "error": "先填站点地址与 API Key"})
+        if not base.startswith(("http://", "https://")):
+            base = "https://" + base
+        try:
+            j = drivers._get(base + "/v1/models",
+                             {"Authorization": "Bearer " + key}, timeout=12)
+            items = j.get("data") or j.get("models") or []
+            for x in items if isinstance(items, list) else []:
+                mid = x.get("id") if isinstance(x, dict) else x
+                s = str(mid or "").strip()
+                if s and s not in ids:
+                    ids.append(s)
+            if ids:
+                note = "来自这个站点的 /v1/models"
+        except Exception as e:
+            note = "站点这次没返回模型清单（%s），可以手动加" % str(e)[:60]
+        if not ids:
+            with PLATFORM_LOCK:
+                cached = ((PLATFORM_CACHE.get("data") or {}).get(aid) or {}).get("model_list") or []
+            if cached:
+                ids = list(cached)[:600]
+                note = "用上一轮采集到的清单（站点这次没响应）"
+        return self._json({"ok": True, "models": ids[:600], "source": "relay", "note": note})
 
     def _account_test(self, payload):
         driver = str(payload.get("driver") or "").strip()

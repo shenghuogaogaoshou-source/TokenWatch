@@ -922,7 +922,8 @@ function buildCard(p, i) {
 
   /* 底部操作 */
   const foot = el("div", "p-foot");
-  const checked = b.checked_at ? "查于 " + b.checked_at.slice(5, 16) : "";
+  const balAt = b.checked_at || (platformFor(p.id) || {}).checked_at || "";
+  const checked = balAt ? "查于 " + String(balAt).slice(5, 16) : "";
   const mut = el("span", "muted", checked || "余额未获取");
   foot.appendChild(mut);
   const rechargeUrl = state.recharge[p.name] || defaultRecharge(p.name) || p.website_url || "#";
@@ -951,17 +952,42 @@ function shortModelName(m) {
 
 /* 账户级「开放哪些模型」选择器：写 accounts.models，不碰采集逻辑 */
 function openModelPick(p, selected, onDone) {
+  return openModelPickFor({ id: p.id, name: p.name, driver: p.driver }, selected, onDone);
+}
+
+/* 通用入口：账户卡与接入向导都走这里。
+   中转站先问站点要模型清单 —— 目录里没有它那些改过名的私有模型，
+   拿目录给用户勾等于让他在别人的菜单上点菜。 */
+async function openModelPickFor(who, selected, onDone) {
   if (!window.PICKER) { toast("模型目录还没就绪，稍后再试"); return; }
+  const isRelay = String(who.driver || "") === "relay";
+  let live = [], note = "";
+  if (isRelay) {
+    try {
+      const j = await postJSON("/api/relay_models", { id: who.id }, 30000);
+      live = (j.models || []).slice();
+      note = j.note || "";
+      if (!live.length && j.error) toast(j.error, true);
+    } catch (e) {
+      toast("读取站点模型失败：" + e.message, true);
+    }
+    /* 以前选过、这次站点没返回的也列出来，方便取消 */
+    for (const x of (selected || [])) if (live.indexOf(x) < 0) live.push(x);
+  }
   window.PICKER.open({
-    title: "「" + p.name + "」开放哪些模型",
-    hint: "只影响这个账户的标注与来源推荐，不影响采集。空着 = 不限制。",
+    title: "「" + who.name + "」开放哪些模型",
+    hint: isRelay
+      ? (note || "列的是这个站点自己返回的模型") + "；名字对不上或没列出来的，可以在下面手动加。"
+      : "只影响这个账户的标注与来源推荐，不影响采集。空着 = 不限制。",
     selected: selected || [],
-    driver: p.driver || "",
+    driver: isRelay ? "" : (who.driver || ""),
+    liveModels: live,
+    liveOnly: isRelay,
+    allowCustom: isRelay,
     onSave: async (arr) => {
       try {
-        const j = await postJSON("/api/account_models", { id: p.id, models: arr });
+        const j = await postJSON("/api/account_models", { id: who.id, models: arr });
         if (!j.ok) throw new Error(j.error || "保存失败");
-        p.models = arr;
         onDone(arr);
         toast(arr.length ? "已记下 " + arr.length + " 个模型" : "已设为不限制");
         if (typeof window.syncModelFilterBar === "function") window.syncModelFilterBar();
@@ -971,6 +997,7 @@ function openModelPick(p, selected, onDone) {
     },
   });
 }
+window.openModelPickFor = openModelPickFor;
 
 function defaultRecharge(name) {
   const map = {
@@ -1024,7 +1051,7 @@ function buildBalance(p, b) {
       const div = el("div", "p-balance");
       const box = el("div", "bal-main");
       box.innerHTML = `
-        <div class="bal-label">可用余额 <span class="err-tag" ${b.available ? 'style="display:none"' : ""}>⚠ 余额可能不足</span>${
+        <div class="bal-label">可用余额 <span class="err-tag" ${b.available === false ? "" : 'style="display:none"'}>⚠ 余额可能不足</span>${
           lowFlag ? `<span class="low-tag" title="${perProv ? "该提供商单独设置的预警阈值" : "全局预警阈值"}">低于预警 ¥${low}</span>` : ""}</div>
         <div class="bal-val${lowFlag ? " warn" : ""}">${money(cnyOf(main))}<small>CNY</small></div>`;
       div.appendChild(box);
@@ -1040,9 +1067,12 @@ function buildBalance(p, b) {
       }
       const pills = el("div", "bal-pills");
       for (const it of b.items || []) {
+        const top = Number(it.topped_up) || 0;
+        const gift = Number(it.granted) || 0;
+        if (top <= 0 && gift <= 0) continue;      /* 没充过值就别摆一个「¥ 充值 0.00」 */
         pills.appendChild(el("span", "pill",
-          `¥ 充值 <b>${money(it.topped_up).slice(1)}</b>` +
-          (it.granted > 0 ? ` · 赠送 <b>${money(it.granted).slice(1)}</b>` : "") +
+          (top > 0 ? `¥ 充值 <b>${money(top).slice(1)}</b>` : "") +
+          (gift > 0 ? `${top > 0 ? " · " : ""}赠送 <b>${money(gift).slice(1)}</b>` : "") +
           (it.currency === "CNY" ? "" : "（原为美元，已折人民币）")));
       }
       div.appendChild(pills);
@@ -1069,7 +1099,8 @@ function buildBalance(p, b) {
           const estTok = cnyTotal / perM * 1e6;
           const line = el("div", "est-line");
           line.innerHTML = `≈ <b>${compactTok(estTok)} tokens</b> 可调用
-            <span class="src">按 ${p.est.blend_source || "标价"} ¥${perM}/1M</span>`;
+            <span class="src">按 ${p.est.blend_source || "标价"} ¥${
+              perM >= 10 ? perM.toFixed(1) : perM.toFixed(2)}/1M</span>`;
           wrap.appendChild(line);
         }
       }
