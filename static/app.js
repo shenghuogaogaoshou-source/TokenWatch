@@ -358,6 +358,9 @@ async function refreshAll(quiet) {
     if (plat && plat.ok) { state.platform = plat; state.platSig = platSigOf(plat); }
     syncSrcBar();
     renderAll();
+    /* 模型页的「你实际用过的模型」也吃官网用量，但它由 models.js 自己画，
+       renderAll 管不到 —— 不补这一句，数据晚到时会一直空着 */
+    if (window.MDL && window.MDL.renderLive) window.MDL.renderLive();
     $("#syncText").textContent = "实时 · " + (main.server_time || "").slice(11, 16) + " 更新";
     if (!quiet) toast("已刷新：官网用量与本地记录均为最新");
     /* 官网数据迟到时补渲染 */
@@ -369,6 +372,7 @@ async function refreshAll(quiet) {
           state.platform = p;
           state.platSig = sig;
           syncSrcBar();
+          if (window.MDL && window.MDL.renderLive) window.MDL.renderLive();
           if (changed) renderAll();
         }
       });

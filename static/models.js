@@ -20,6 +20,7 @@ const MDL = (function () {
     limit: 120,
     sel: new Set(),
     delta: "",
+    driverMeta: {},           // /api/drivers：哪家能登录、哪家只能比价
   };
 
   const $id = (x) => document.getElementById(x);
@@ -102,6 +103,49 @@ const MDL = (function () {
     });
   }
 
+  /* 这个模型能从哪接进来：
+     direct —— 官网开放登录态，登一次就能拉明细
+     catalog —— 官网只给价格（要 OpenAI/Anthropic 的用量得有管理密钥），只能走中转站
+     none —— 连平台都没有（meta / mistral 这种），只能中转站 */
+  function sourceOf(m) {
+    const d = S.driverMeta[m.driver];
+    if (d && (d.probe || d.cookie_name)) return { kind: "direct", meta: d };
+    if (d && d.capability === "catalog") return { kind: "catalog", meta: d };
+    return { kind: "none", meta: d || null };
+  }
+
+  /* 点「接入」：能直连官网的直接开那家的表单（里面已有自动读取登录态）；
+     不能直连的，把话说清楚，并把人送到唯一能统计它的地方 —— 中转站。 */
+  function sourceTip(m) {
+    const s = sourceOf(m);
+    if (s.kind === "direct") return "接 " + s.meta.label + "：登录一次就能拉到它的用量";
+    if (s.kind === "catalog") return s.meta.label + " 官网不开放用量接口，接中转站才能统计";
+    return "这个模型没有开放账户接口，只能通过中转站用";
+  }
+
+  function openSourceFor(m) {
+    const s = sourceOf(m);
+    const label = (s.meta && s.meta.label) || m.vendor || m.driver || m.id;
+    if (s.kind === "direct") {
+      /* 这家已经接过了：用户真正要的不是「再建一个账户」，而是把模型加进现有账户 */
+      const mine = (S.accounts || []).find((a) => (a.driver || a.kind) === s.meta.id);
+      if (mine) {
+        const cur = mine.models || [];
+        if (cur.some((x) => looseEq(x, m.id))) { toast("这个模型已经能统计到了"); return; }
+        toast("正在加到「" + (mine.name || s.meta.label) + "」的开放模型里…");
+        postJSON("/api/account_models", { id: mine.id, models: cur.concat([m.id]) })
+          .then(() => { toast("已加入，这个模型现在能统计了"); load(); })
+          .catch((e) => toast("加入失败：" + e.message, true));
+        return;
+      }
+      if (!window.ACCT) { toast("账户面板还没就绪，稍后再试"); return; }
+      window.ACCT.open("", s.meta.id, { models: [m.id] });
+      return;
+    }
+    toast(label + " 官网不开放用量接口，要统计它得接一个中转站");
+    if (window.ACCT) setTimeout(() => window.ACCT.open("", "relay", { models: [m.id] }), 600);
+  }
+
   function filtered() {
     const q = S.q.trim().toLowerCase();
     return S.all.filter((m) => {
@@ -155,8 +199,11 @@ const MDL = (function () {
         '<span class="mdot" style="background:' + colorOf(m.driver) + '"></span>' +
         '<span class="mrow-n"><b>' + m.name + '</b><small>' + m.id + "</small></span>" +
         '<span class="mrow-v">' + labelOf(m.driver) + "</span>" +
-        '<span class="mrow-tag' + (accs.length ? " on" : "") + '" title="' + esc(accTip) + '">' +
-          (accs.length ? accs.length + " 个已接" : "未接入") + "</span>" +
+        (accs.length
+          ? '<span class="mrow-tag on" title="' + esc(accTip) + '">' + accs.length + " 个已接</span>"
+          /* 接不进来不是「没数据」而是「还没接」，所以给个能点的按钮 */
+          : '<button type="button" class="mrow-tag act" data-mid="' + esc(m.id) + '" ' +
+            'title="' + esc(sourceTip(m)) + '">接入 ›</button>') +
         '<span class="mrow-ctx">' + ctxText(m.context) + "</span>" +
         '<span class="mrow-p' + (free ? " free" : "") + '"><b>' + fmtPrice(pin) + "</b><small>输入 / 百万</small></span>" +
         '<span class="mrow-p' + (free ? " free" : "") + '"><b>' + fmtPrice(pout) + "</b><small>输出 / 百万</small></span>" +
@@ -169,6 +216,15 @@ const MDL = (function () {
 
     const more = $id("mdlMore");
     if (more) more.addEventListener("click", () => { S.limit += 120; renderList(); });
+
+    host.querySelectorAll(".mrow-tag.act").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();          /* 别让 label 顺手把勾选框也切了 */
+        e.stopPropagation();
+        const mm = slice.find((x) => x.id === btn.dataset.mid);
+        if (mm) openSourceFor(mm);
+      });
+    });
 
     host.querySelectorAll(".mrow[data-id]").forEach((row) => {
       const cb = row.querySelector("input");
@@ -199,9 +255,17 @@ const MDL = (function () {
     const when = (data.fetched_at || "").replace("T", " ").slice(0, 16);
     const vendors = S.groups.length;
     const mine = S.all.filter((m) => accountsFor(m).length).length;
+    /* 关注清单里有没有「选了但没人能统计」的模型 —— 这是用户最容易卡住的地方 */
+    let lack = 0;
+    for (const id of S.sel) {
+      const mm = S.all.find((x) => x.id === id);
+      if (mm && !accountsFor(mm).length) lack++;
+    }
     host.textContent = data.total
       ? data.total + " 个模型 · " + vendors + " 个厂商分组 · 目录更新于 " + (when || "—") +
         (S.accounts.length ? " · 其中 " + mine + " 个有已接入的账户能提供" : " · 还没接入任何账户") +
+        (S.sel.size ? " · 已选 " + S.sel.size + " 个" +
+          (lack ? "，其中 " + lack + " 个还没接（点行尾的「接入」）" : "，都能统计到") : "") +
         (data.stale ? "（缓存已过期，正在用旧数据）" : "") +
         (S.delta ? " · " + S.delta : "")
       : "目录为空";
@@ -295,10 +359,15 @@ const MDL = (function () {
     };
     try {
       /* 目录与账户清单一起拉：行里要标「这个模型有没有已接入的账户能提供」 */
-      const [jr, ja] = await Promise.all([
+      const [jr, ja, jd] = await Promise.all([
         getJSON("/api/catalog?full=1" + (force ? "&refresh=1" : "")),
         getJSON("/api/accounts").catch(() => null),
+        getJSON("/api/drivers").catch(() => null),
       ]);
+      if (jd && jd.drivers) {
+        S.driverMeta = {};
+        jd.drivers.forEach((d) => { S.driverMeta[d.id] = d; });
+      }
       if (jr && jr.ok === false) throw new Error(jr.error || "平台没有返回目录");
       S.all = (jr.models || []).slice();
       S.groups = jr.groups || [];

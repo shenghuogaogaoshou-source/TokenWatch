@@ -21,12 +21,17 @@ const CAP_GROUPS = [
 
 const ACCT = (function () {
   const $id = (x) => document.getElementById(x);
-  const S = { drivers: [], accounts: [], driver: "", id: "", payload: {} };
+  const S = { drivers: [], accounts: [], driver: "", id: "", payload: {}, afterModels: [] };
 
-  function open(id) {
+  /* open(id, driverHint, opts)
+     - 不带参数：从平台列表开始（原来的行为）
+     - 带 driverHint：直接进这家平台的表单（模型页「接入这个模型」用）
+     - opts.models：保存成功后把这几个模型写进该账户的开放模型清单 */
+  function open(id, driverHint, opts) {
     S.id = id || "";
-    S.driver = "";
+    S.driver = driverHint || "";
     S.payload = {};
+    S.afterModels = ((opts && opts.models) || []).slice();
     $id("acctModal").hidden = false;
     $id("acctTitle").textContent = id ? "账户设置" : "添加账户";
     $id("btnAcctSave").hidden = true;
@@ -42,6 +47,7 @@ const ACCT = (function () {
           return;
         }
       }
+      if (driverHint) { renderForm(driverHint, null); return; }
       renderPicker();
     });
   }
@@ -188,9 +194,18 @@ const ACCT = (function () {
         label: c.label, base_url: c.base_url, fields: c.fields,
       });
       if (!j.ok) throw new Error(j.error || "保存失败");
-      toast("已保存，正在刷新数据…");
+      /* 从模型页点进来时，顺手把那个模型记进这个账户的清单 */
+      if (S.afterModels.length && j.id) {
+        try {
+          await postJSON("/api/account_models", { id: j.id, models: S.afterModels });
+        } catch (e) { /* 记不上不影响接入本身 */ }
+      }
+      const marked = S.afterModels.length;
+      S.afterModels = [];
+      toast(marked ? "已接入，并标好了这 " + marked + " 个模型" : "已保存，正在刷新数据…");
       close();
       if (typeof refreshAll === "function") refreshAll(true);
+      if (window.MDL && marked) window.MDL.load();
     } catch (e) {
       showRes(e.message, false);
     } finally {

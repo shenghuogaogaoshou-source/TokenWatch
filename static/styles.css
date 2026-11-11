@@ -877,3 +877,9 @@ body.ranging #pricingPanel { opacity:.45; transition:opacity .12s ease; }
 .pick-custom input { flex:1 1 auto; min-width:0; padding:7px 10px; border-radius:8px;
   border:1px solid var(--line); background:var(--panel-2); color:var(--ink); font-size:11.5px; }
 .pick-custom input:focus { outline:none; border-color:var(--accent); }
+
+/* 模型行尾的「接入」按钮（未接入时替代死标签） */
+.mrow-tag.act { border:1px dashed var(--line); background:transparent; cursor:pointer;
+  color:var(--accent); font-family:inherit; font-size:9.5px; padding:1px 6px;
+  border-radius:999px; white-space:nowrap; transition:border-color .12s, background .12s; }
+.mrow-tag.act:hover { border-color:var(--accent); background:var(--accent-soft); }
