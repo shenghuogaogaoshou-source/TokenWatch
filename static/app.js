@@ -1027,17 +1027,23 @@ function lowFor(name) {
   return parseFloat(state.cfg && state.cfg.low_balance_cny) || 0;
 }
 
-/* 近 7 个自然日的日均消耗（不看关注模型筛选：余额能撑几天跟你看哪几个模型无关） */
+/* 日均消耗（不看关注模型筛选：余额能撑几天跟你看哪几个模型无关）。
+   先看近 7 天；这周没花钱就退到近 30 天，否则「最近没用量」会被当成
+   「算不出来」直接不显示 —— 那反而更让人困惑。 */
 function recentDailyCost(p) {
   const raw = ((state.platform && state.platform.usage) || {})[p.id];
   const usePlat = raw && raw.status === "ok" && raw.mode === "usage" && raw.days;
   const days = (usePlat ? raw.days : ((p.usage && p.usage.days) || {})) || {};
-  const from = localISO(6);
-  let sum = 0;
-  for (const d of Object.keys(days)) {
-    if (d >= from) sum += (days[d] && days[d].cost) || 0;
-  }
-  return sum / 7;
+  const sumSince = (from) => {
+    let s = 0;
+    for (const d of Object.keys(days)) if (d >= from) s += (days[d] && days[d].cost) || 0;
+    return s;
+  };
+  const s7 = sumSince(localISO(6));
+  if (s7 > 0.0001) return { daily: s7 / 7, win: 7 };
+  const s30 = sumSince(localISO(29));
+  if (s30 > 0.0001) return { daily: s30 / 30, win: 30 };
+  return { daily: 0, win: 7 };
 }
 
 function buildBalance(p, b) {
@@ -1060,12 +1066,13 @@ function buildBalance(p, b) {
         <div class="bal-val${lowFlag ? " warn" : ""}">${money(cnyOf(main))}<small>CNY</small></div>`;
       div.appendChild(box);
       /* 余额能撑几天：比「还剩 ¥23.04」有用得多的一句话 */
-      const daily = recentDailyCost(p);
+      const rc = recentDailyCost(p);
+      const daily = rc.daily;
       if (daily >= 0.05 && cnyTotal > 0) {
         const left = cnyTotal / daily;
         const txt = left >= 100 ? "99+ 天" : left < 1 ? "不到 1 天" : Math.round(left) + " 天";
         const run = el("div", "bal-runway" + (left < 3 ? " warn" : ""));
-        run.innerHTML = "按近 7 天日均 " + esc(money(daily)) + " 算，还能撑 <b>" + esc(txt) + "</b>";
+        run.innerHTML = "按近 " + rc.win + " 天日均 " + esc(money(daily)) + " 算，还能撑 <b>" + esc(txt) + "</b>";
         run.title = "余额 " + money(cnyTotal) + " ÷ 日均 " + money(daily);
         div.appendChild(run);
       }

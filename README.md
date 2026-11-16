@@ -198,7 +198,7 @@ core/
   grab.py              从 Edge 登录窗口读登录态（CDP，标准库实现）
 static/
   index.html           四页骨架
-  styles.css           设计系统（浅 / 暗双主题）
+  styles.css           设计系统（暖黄纸 / 暖棕夜两档亮度，同一套暖色令牌）
   app.js               数据加载、汇总、图表、明细、定价渲染、模型过滤、导出
   accounts.js          添加 / 编辑 / 删除账户 + 接入向导
   models.js            模型清单、关注清单、实际用过的模型
