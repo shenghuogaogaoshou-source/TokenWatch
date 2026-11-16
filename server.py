@@ -581,15 +581,65 @@ def http_get(url, headers, timeout=10, retries=1):
     return last if last else (0, "network error")
 
 
+_CC_DS_KEY = {"t": 0.0, "key": None}
+
+
+def ccswitch_deepseek_key():
+    """从 CC Switch 的配置里找 DeepSeek 的 API Key（只读，结果缓存 10 分钟）。
+
+    背景：DeepSeek 官方**没有**网页余额接口（控制台连探 11 个候选路径全是 404），
+    余额唯一来源是 API Key + GET /user/balance。账户模式下用户往往没在
+    「平台凭据」里再填一遍 Key，但这个 Key 十有八九已经躺在 CC Switch 的
+    DeepSeek 提供商配置里（claude / codex 两处入口）—— 直接拿来查余额，
+    免得「余额一直 —」还被当成 bug。
+    """
+    now = time.time()
+    if now - _CC_DS_KEY["t"] < 600 and _CC_DS_KEY["key"]:
+        return _CC_DS_KEY["key"]
+    key = None
+    try:
+        import sqlite3
+        con = sqlite3.connect(DB_PATH)
+        try:
+            for _pid, cfg in con.execute("select id, settings_config from providers"):
+                cfg = cfg or ""
+                if "deepseek" not in cfg.lower() and "api.deepseek.com" not in cfg.lower():
+                    continue
+                try:
+                    meta = json.loads(cfg)
+                except Exception:
+                    continue
+                env = meta.get("env") or {}
+                auth = meta.get("auth") or {}
+                cand = str(auth.get("OPENAI_API_KEY") or env.get("OPENAI_API_KEY")
+                           or env.get("ANTHROPIC_AUTH_TOKEN")
+                           or env.get("ANTHROPIC_API_KEY") or "").strip()
+                if cand.startswith("sk-"):
+                    key = cand
+                    break
+        finally:
+            con.close()
+    except Exception:
+        key = None
+    _CC_DS_KEY.update({"t": now, "key": key})
+    return key
+
+
 def balance_deepseek(p, timeout=12):
-    # 没有 CC Switch 时 p["_key"] 为空 → 用「平台凭据」里可选的 api_key 兜底。
-    # DeepSeek 控制台没有开放余额查询接口（试过 /api/v0/users/balance 等均 404），
-    # 所以直连模式下只能靠 API Key；两样都没有就如实说「去官网看」，不伪造 0。
-    key = (p.get("_key") or
-           str((load_platform_creds().get("deepseek") or {}).get("api_key") or "")).strip()
+    """DeepSeek 余额。凭据优先级：
+    ① CC Switch 提供商自带的 Key（账户模式下 p["_key"]）
+    ② 「平台凭据」里显式填的 api_key
+    ③ 自动从 CC Switch 库里找 DeepSeek 提供商的 Key（只读，10 分钟缓存）
+    DeepSeek 官方没有网页余额接口，三样都没有就如实说，不伪造 0。"""
+    key = (str((load_platform_creds().get("deepseek") or {}).get("api_key") or "")).strip() \
+        or (p.get("_key") or "").strip()
+    src = "官方余额接口"
+    if not key:
+        key = ccswitch_deepseek_key() or ""
+        src = "CC Switch 里配置的 DeepSeek Key"
     if not key:
         return {"status": "unavailable", "type": "money",
-                "detail": "未提供 DeepSeek API Key，余额请在控制台查看"}
+                "detail": "没有 DeepSeek API Key（官方不提供网页余额查询），余额请在控制台查看"}
     root = re.match(r"^(https?://[^/]+)", p["base_url"] or "")
     host = root.group(1) if root else "https://api.deepseek.com"
     url = host + "/user/balance"
@@ -612,7 +662,7 @@ def balance_deepseek(p, timeout=12):
         return {"status": "error", "http": 200, "detail": "无余额信息"}
     return {"status": "ok", "type": "money", "items": arr,
             "available": bool(j.get("is_available", True)),
-            "checked_at": now_iso()}
+            "source": src, "checked_at": now_iso()}
 
 
 def balance_moonshot(p, timeout=12):
@@ -877,7 +927,7 @@ PLATFORM_SPEC = {
         "fields": [{"key": "token", "label": "网页登录 Token",
                     "hint": "platform.deepseek.com 控制台 F12 → Console 执行 JSON.parse(localStorage.userToken).value"},
                    {"key": "api_key", "label": "API Key（可选，用于查余额）", "optional": True,
-                    "hint": "sk-… 不填也能看用量；DeepSeek 控制台未开放余额接口，只有 API Key 能查余额"}],
+                    "hint": "sk-… 不填也能看用量；DeepSeek 官方没有网页余额接口，只有 API Key 能查 —— 不填的话会自动借用 CC Switch 里 DeepSeek 提供商的 Key"}],
         "howto": [
             "浏览器登录 platform.deepseek.com（注意：这不是 API Key，是网页登录凭据）",
             "按 F12 打开开发者工具，切到 Console 面板",
