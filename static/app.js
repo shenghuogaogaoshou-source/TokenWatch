@@ -132,6 +132,58 @@ function initTheme() {
   try { localStorage.removeItem("tokenwatch-theme"); } catch (e) {}
 }
 
+/* ---------- 侧栏收起 ----------
+   按钮骑在导轨右边界上；Ctrl+B 同样切换。状态记在本地，下次打开保持。 */
+const RAIL_KEY = "tokenwatch-rail";
+
+function railMini() {
+  const app = document.querySelector(".app");
+  return !!(app && app.classList.contains("rail-mini"));
+}
+
+function setRail(mini, save) {
+  const app = document.querySelector(".app");
+  if (!app) return;
+  app.classList.toggle("rail-mini", !!mini);
+  const b = $("#btnRail");
+  if (b) {
+    b.setAttribute("aria-expanded", String(!mini));
+    b.title = (mini ? "展开侧栏" : "收起侧栏") + "（Ctrl+B）";
+    b.setAttribute("aria-label", b.title);
+  }
+  /* 收起后文字藏起来了，靠 title 提示这是哪一页 */
+  document.querySelectorAll("#railNav button").forEach((btn) => {
+    const label = btn.querySelector("span");
+    if (!label) return;
+    if (mini) btn.title = label.textContent.trim();
+    else btn.removeAttribute("title");
+  });
+  if (save) {
+    try { localStorage.setItem(RAIL_KEY, mini ? "1" : "0"); } catch (e) {}
+  }
+}
+
+function initRail() {
+  let saved = false;
+  try { saved = localStorage.getItem(RAIL_KEY) === "1"; } catch (e) {}
+  setRail(saved, false);
+
+  const b = $("#btnRail");
+  if (b) b.addEventListener("click", () => setRail(!railMini(), true));
+
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (String(e.key || "").toLowerCase() !== "b") return;
+    const el = e.target;
+    const tag = (el && el.tagName ? el.tagName : "").toLowerCase();
+    /* 输入框里按 Ctrl+B 不该动侧栏 */
+    if (tag === "input" || tag === "textarea" || tag === "select" ||
+        (el && el.isContentEditable)) return;
+    e.preventDefault();
+    setRail(!railMini(), true);
+  });
+}
+
 /* ---------- 网络 ---------- */
 async function getJSON(url) {
   const r = await fetch(url, { cache: "no-store" });
@@ -2335,6 +2387,7 @@ function bind() {
 (async function init() {
   bind();
   initTheme();
+  initRail();
   try {
     await loadConfig();
   } catch (e) {}

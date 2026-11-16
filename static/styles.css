@@ -54,7 +54,36 @@ b, strong { font-weight:600; }
   display:flex; flex-direction:column; gap:26px;
   padding:22px 14px 18px; background:var(--rail);
   border-right:1px solid var(--line);
+  transition:width .18s ease, padding .18s ease;
 }
+
+/* 收起按钮：骑在导轨右边界上，两种状态都在同一个位置 */
+.rail-toggle {
+  position:absolute; right:-11px; top:50%; z-index:6;
+  width:20px; height:40px; display:grid; place-items:center; padding:0;
+  border:1px solid var(--line); background:var(--panel); color:var(--ink-3);
+  border-radius:8px; cursor:pointer; opacity:.5; transform:translateY(-50%);
+  box-shadow:0 1px 2px rgba(58,46,27,.1);
+  transition:opacity .15s, color .15s, border-color .15s, background .15s, transform .2s ease;
+}
+.rail:hover .rail-toggle, .rail-toggle:focus-visible { opacity:1; }
+.rail-toggle:hover { color:var(--accent); border-color:var(--accent); background:var(--panel-2); }
+.app.rail-mini .rail-toggle { opacity:1; transform:translateY(-50%) rotate(180deg); }
+.rail-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+
+/* ---- 收起状态：只剩图标，数值压成两行小字 ---- */
+.app.rail-mini .rail { width:64px; padding:20px 9px 16px; gap:20px; }
+.app.rail-mini .rail-brand { justify-content:center; padding:0; }
+.app.rail-mini .rail-brand-t { display:none; }
+.app.rail-mini .rail-nav button { justify-content:center; padding:10px 0; gap:0; }
+.app.rail-mini .rail-nav button span { display:none; }
+.app.rail-mini .rail-nav button.on::before { left:-9px; }
+.app.rail-mini .rail-foot { padding-top:10px; }
+.app.rail-mini .rail-stat { flex-direction:column; align-items:center; gap:1px; padding:3px 0; }
+.app.rail-mini .rail-stat span { font-size:9px; letter-spacing:0; }
+.app.rail-mini .rail-stat b { font-size:11.5px; }
+.app.rail-mini .rail-sync { justify-content:center; padding:6px 0 0; }
+.app.rail-mini .rail-sync #syncText { display:none; }
 .rail-brand { display:flex; align-items:center; gap:10px; padding:0 6px; }
 .rail-brand .mark { display:grid; place-items:center; width:28px; height:28px; }
 .rail-brand .mark img { width:26px; height:26px; border-radius:7px; display:block; }
