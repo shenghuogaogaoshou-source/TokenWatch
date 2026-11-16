@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-TokenWatch 桌面端入口（Edge 应用窗口版）
-- 启动本地服务后，用系统 Edge 的 --app 模式打开一个“无地址栏、无标签页”的应用窗口
-- 观感与原生应用一致，且显示可靠性远高于内嵌 WebView；窗口关闭即自动退出
-- 若已有一个实例在运行，再次双击只会再开一个窗口（不重复起服务）
+TokenWatch 桌面端入口
+- 启动本地服务后，用 WebView2（pywebview）打开原生窗口：
+  标题栏能按品牌色着色（Edge --app 的窗口是它自己画的，改不了颜色，只会是黑边），
+  图标、任务栏、Alt+Tab 都归我们控制
+- WebView2 不可用时自动回落 Edge --app 窗口，功能不受影响（只是标题栏颜色改不了）
+- 窗口关闭即自动退出；若已有实例在跑，再次双击只会再开一个窗口（不重复起服务）
 """
 import os
 import sys
@@ -14,6 +16,10 @@ import threading
 import subprocess
 
 APP_NAME = "TokenWatch"
+TITLE = "TokenWatch · 多模型用量台"
+BRAND = "#3A2E1B"        # 图标里眼睛的深棕，用作标题栏底色
+BRAND_TEXT = "#F3DFB4"   # 图标底的皮肤黄，用作标题文字
+PANEL_BG = "#F7F0E2"     # 界面暖纸底色，窗口首帧用它，避免闪白
 
 
 def _appdata_dir():
@@ -166,6 +172,101 @@ def watch_window_icon(path, seconds=12.0):
         time.sleep(0.4 if time.time() - t0 < 6 else 1.2)
 
 
+def _colorref(hexstr):
+    h = hexstr.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (b << 16) | (g << 8) | r          # 0x00BBGGRR
+
+
+def paint_window_chrome(seconds=8.0):
+    """把标题栏染成品牌色、文字用暖纸色，并把窗口图标换成我们的。
+
+    Windows 11 才支持 DWMWA_CAPTION_COLOR（build 22000+）；老系统上静默跳过，
+    回落到系统自己的标题栏颜色。Edge --app 窗口没有原生标题栏，那里也改不了。
+    """
+    import ctypes
+    u = ctypes.WinDLL("user32")
+    dwm = ctypes.WinDLL("dwmapi")
+    t0 = time.time()
+    done = False
+    while time.time() - t0 < seconds:
+        wins = _titled_windows(APP_NAME)
+        if wins:
+            hwnd = wins[0]
+            if not done:
+                for idx, val in ((35, _colorref(BRAND)),        # CAPTION_COLOR
+                                 (36, _colorref(BRAND_TEXT)),   # TEXT_COLOR
+                                 (34, _colorref(BRAND)),        # BORDER_COLOR
+                                 (20, 1)):                      # 深色语义：按钮画成浅色
+                    v = ctypes.c_int(val)
+                    dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), idx,
+                                              ctypes.byref(v), 4)
+                done = True
+            ico = icon_file()
+            if ico:
+                set_window_icon(hwnd, ico)
+            if done:
+                return True
+        time.sleep(0.35)
+    return False
+
+
+def _work_area():
+    """可用工作区（不含任务栏）。未声明 DPI 感知时拿到的就是逻辑像素，和 pywebview 一致。"""
+    import ctypes
+    from ctypes import wintypes as w
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", w.LONG), ("t", w.LONG), ("r", w.LONG), ("b", w.LONG)]
+
+    rc = RECT()
+    try:
+        ctypes.WinDLL("user32").SystemParametersInfoW(0x0030, 0, ctypes.byref(rc), 0)
+        if rc.r > rc.l and rc.b > rc.t:
+            return rc.l, rc.t, rc.r - rc.l, rc.b - rc.t
+    except Exception:
+        pass
+    return 0, 0, 1280, 800
+
+
+def window_geometry():
+    """按屏幕留出边距，并居中。默认 1380×900 在 125% 缩放的 1080p 上会超出屏幕底部。"""
+    l, t, aw, ah = _work_area()
+    w = min(1320, int(aw * 0.82))
+    h = min(880, int(ah * 0.86))
+    x = l + (aw - w) // 2
+    y = t + max(0, (ah - h) // 2 - 8)
+    return w, h, x, y
+
+
+def open_webview_window(url):
+    """优先用 WebView2 原生窗口；返回 False 表示这个环境用不了，交给 Edge 回落。"""
+    try:
+        import webview
+    except Exception as e:
+        logging.warning("pywebview 不可用，回落 Edge 窗口：%s", e)
+        return False
+    ico = icon_file()
+    w, h, x, y = window_geometry()
+    try:
+        webview.create_window(
+            TITLE, url,
+            width=w, height=h, x=x, y=y, min_size=(1000, 620),
+            background_color=PANEL_BG,
+            text_select=True,          # pywebview 6 默认禁止选中文本，这很反直觉
+            confirm_close=False,
+        )
+        threading.Thread(target=paint_window_chrome, daemon=True).start()
+        webview.start(gui="edgechromium", icon=ico,
+                      private_mode=False,
+                      storage_path=os.path.join(DATA_DIR, "webview"))
+        logging.info("webview window closed")
+        return True
+    except Exception:
+        logging.exception("WebView2 窗口启动失败，回落 Edge")
+        return False
+
+
 def open_app_window(url, edge, profile_dir):
     """启动独立 Edge 应用窗口（专属 user-data-dir，关闭窗口可感知）"""
     cmd = [edge, "--app=" + url,
@@ -190,17 +291,18 @@ def main():
     if port_in_use(default_port) and is_tokenwatch(default_port):
         url = "http://127.0.0.1:%d/" % default_port
         logging.info("instance already running, opening window at %s", url)
-        if edge:
-            open_app_window(url, edge, os.path.join(DATA_DIR, "edge-profile"))
-        else:
-            import webbrowser
-            webbrowser.open(url)
-        # 这个进程马上就退，来不及常驻补图标；等几秒把图标设上去再走
-        ico = icon_file()
-        if ico:
-            t = threading.Thread(target=watch_window_icon, args=(ico, 5.0), daemon=True)
-            t.start()
-            t.join(5.5)
+        if not open_webview_window(url):
+            if edge:
+                open_app_window(url, edge, os.path.join(DATA_DIR, "edge-profile"))
+                # 这个进程马上就退，等几秒把图标设上去再走
+                ico = icon_file()
+                if ico:
+                    t = threading.Thread(target=watch_window_icon, args=(ico, 5.0), daemon=True)
+                    t.start()
+                    t.join(5.5)
+            else:
+                import webbrowser
+                webbrowser.open(url)
         return
 
     srv.bootstrap()
@@ -210,32 +312,31 @@ def main():
     t.start()
     logging.info("server started at %s (db=%s)", url, srv.DB_PATH)
 
-    # ---- 打开应用窗口 ----
     proc = None
-    if edge:
-        proc = open_app_window(url, edge, os.path.join(DATA_DIR, "edge-profile"))
-        if proc:
-            logging.info("Edge app window launched (pid=%s)", proc.pid)
-    if proc is None:
-        import webbrowser
-        webbrowser.open(url)
-        logging.warning("Edge not found, opened default browser instead")
-
-    # 把任务栏图标设成我们自己的（Edge 的 favicon 缓存可能还留着旧图）
-    ico = icon_file()
-    if ico:
-        threading.Thread(target=watch_window_icon, args=(ico,), daemon=True).start()
-        logging.info("window icon watcher started (%s)", ico)
-
-    # ---- 等待窗口被关闭后自动退出 ----
     try:
-        while True:
-            if proc is not None and proc.poll() is not None:
+        # ---- 首选 WebView2 原生窗口：标题栏可以是品牌深棕 ----
+        if open_webview_window(url):
+            return
+
+        # ---- 回落：Edge --app 窗口（标题栏由 Edge 自己画，改不了颜色）----
+        if edge:
+            proc = open_app_window(url, edge, os.path.join(DATA_DIR, "edge-profile"))
+            if proc:
+                logging.info("Edge app window launched (pid=%s)", proc.pid)
+        if proc is None:
+            import webbrowser
+            webbrowser.open(url)
+            logging.warning("Edge not found, opened default browser instead")
+
+        ico = icon_file()
+        if ico:
+            threading.Thread(target=watch_window_icon, args=(ico,), daemon=True).start()
+
+        while proc is not None:
+            if proc.poll() is not None:
                 logging.info("app window closed -> exit")
                 break
             time.sleep(1)
-    except KeyboardInterrupt:
-        pass
     finally:
         try:
             httpd.shutdown()

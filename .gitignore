@@ -16,6 +16,10 @@ config.json
 # 「自动读取登录态」的 Edge 配置目录（含登录 cookie，绝不能入库）
 edge-profile*/
 grab_port.txt
+# WebView2 资料目录（源码模式运行时落在仓库里）
+webview/
+# 模型目录缓存（源码模式运行时生成）
+models_cache.json
 .dev_config.json
 .dev_usage.db*
 usage.db*

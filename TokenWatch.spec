@@ -20,7 +20,9 @@ a = Analysis(
     # tokenwatch.ico 要作为文件带进包里：启动后用它给 Edge 应用窗口设任务栏图标
     datas=[(os.path.join(HERE, 'static'), 'static'),
            (os.path.join(HERE, 'tokenwatch.ico'), '.')],
-    hiddenimports=[],
+    # pywebview 在运行时按 gui 动态 import 后端，静态分析看不到
+    hiddenimports=['webview', 'webview.platforms.winforms',
+                   'webview.platforms.edgechromium', 'clr', 'clr_loader'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -4,7 +4,7 @@
 不需要 CC Switch，也不需要把 API Key 交给任何第三方 —— 登录一次各家的控制台，
 之后自动续期、自动统计。
 
-> 单文件本地服务（Python 标准库）+ 系统 Edge 应用窗口，数据全部留在本机。
+> 单文件本地服务（Python 标准库）+ WebView2 原生窗口，数据全部留在本机。
 
 ---
 
@@ -42,7 +42,9 @@ pyinstaller --noconfirm TokenWatch.spec          # 目录版 → dist/TokenWatch
 pyinstaller --noconfirm TokenWatchLauncher.spec   # 单文件启动器（放桌面）
 ```
 
-双击 `TokenWatch.exe` 会起本地服务，并用系统 Edge 的 `--app` 模式开一个无地址栏窗口。
+双击 `TokenWatch.exe` 会起本地服务，并用 WebView2 开一个原生窗口：
+标题栏是图标里那只眼睛的深棕（`#3A2E1B`），界面是暖纸色，没有任何黑色块。
+WebView2 不可用时自动回落系统 Edge 的 `--app` 窗口（功能一样，只是标题栏颜色跟随系统）。
 **重新打包前先退出正在运行的实例**，否则输出目录会被占用。
 
 ### 第一次使用
@@ -189,7 +191,7 @@ pyinstaller --noconfirm TokenWatchLauncher.spec   # 单文件启动器（放桌�
 
 ```
 server.py              本地 HTTP 服务 + 各平台采集 + 定价
-desktop_app.py         桌面端入口（起服务 + 开 Edge 应用窗口）
+desktop_app.py         桌面端入口（起服务 + 开 WebView2 窗口，标题栏按品牌色着色）
 core/
   paths.py             运行期路径（配置 / 凭据 / 本地库 / 目录缓存）
   store.py             本地用量库 usage.db（账户、逐日用量、余额快照）
@@ -198,7 +200,7 @@ core/
   grab.py              从 Edge 登录窗口读登录态（CDP，标准库实现）
 static/
   index.html           四页骨架
-  styles.css           设计系统（暖黄纸 / 暖棕夜两档亮度，同一套暖色令牌）
+  styles.css           设计系统（暖纸一套令牌：界面底色 #F7F0E2，墨色 #3A2E1B）
   ../design/icon-warm.svg  图标矢量源（形状取自参考图描摹，只换色）
   app.js               数据加载、汇总、图表、明细、定价渲染、模型过滤、导出
   accounts.js          添加 / 编辑 / 删除账户 + 接入向导
@@ -217,7 +219,8 @@ test_real.js           实盘回归（真实接口，阈值复位）
 | `platform_creds.json` | 各平台凭据（明文，仅本机） |
 | `usage.db` | 账户表（含每账户的开放模型清单）、逐日用量、余额快照 |
 | `models_cache.json` | 模型目录缓存 |
-| `edge-profile/` | 应用自己的 Edge 配置目录 |
+| `edge-profile/` | 回落方案（Edge 应用窗口）用的配置目录 |
+| `webview/` | WebView2 的资料目录（localStorage 等） |
 | `edge-profile-login/` | 「自动读取登录态」用的独立 Edge 配置目录（登一次长期有效） |
 
 账户表的结构升级是自动的：启动时检测 `accounts` 表缺 `models` 列就 `ALTER TABLE` 补上，

@@ -124,30 +124,12 @@ function startProviderWatcher() {
   setInterval(watchProviders, 5000);
 }
 
-/* ---------- 主题切换 ---------- */
+/* ---------- 主题 ----------
+   只有一套暖纸配色：界面不再有暗色分支，也不跟系统深浅色走。
+   窗口标题栏的深棕由桌面端（desktop_app.py）按品牌色设置。 */
 function initTheme() {
-  const saved = localStorage.getItem("tokenwatch-theme");
-  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const theme = saved || (prefersDark ? "dark" : "light");
-  setTheme(theme);
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
-    if (!localStorage.getItem("tokenwatch-theme")) setTheme(e.matches ? "dark" : "light");
-  });
-}
-function setTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  const icon = $("#themeIcon");
-  if (icon) {
-    icon.innerHTML = theme === "dark"
-      ? '<path d="M6 0a6 6 0 1 0 6 6 6 6 0 0 0-6-6Zm0 11a5 5 0 1 1 0-10 5 5 0 0 1 0 10Z" fill="currentColor"/>'
-      : '<path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" fill="currentColor"/>';
-  }
-}
-function toggleTheme() {
-  const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
-  const next = cur === "dark" ? "light" : "dark";
-  setTheme(next);
-  localStorage.setItem("tokenwatch-theme", next);
+  document.documentElement.setAttribute("data-theme", "light");
+  try { localStorage.removeItem("tokenwatch-theme"); } catch (e) {}
 }
 
 /* ---------- 网络 ---------- */
@@ -2262,7 +2244,6 @@ function schedulePricing() {
 
 /* ---------- 事件绑定 ---------- */
 function bind() {
-  $("#btnTheme").addEventListener("click", toggleTheme);
   $("#btnRefresh").addEventListener("click", () => refreshAll(false));
   const ta = $("#btnTestAll");
   if (ta) ta.addEventListener("click", testAllAccounts);
