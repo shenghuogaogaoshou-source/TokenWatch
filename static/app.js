@@ -1247,23 +1247,12 @@ function renderDetail() {
   });
   renderApiTable(allProvs, {
     emptyText: unifiedEmptyText(),
-    noteText: allProvs.length
-      ? `范围：${rangeText()} · 逐家判定：${nPlat} 家取官网实际扣费口径` +
-        (nExp ? (builtinMode()
-          ? `，${nExp} 家官网凭据已失效（需重新获取票据）`
-          : `，${nExp} 家官网凭据已失效、回落本机记录（需重新获取票据）`) : "") +
-        (nLocal ? (builtinMode()
-          ? `，${nLocal} 家尚未配置官网凭据（本区间按 0 计）`
-          : `，${nLocal} 家官网未接通、回落本机用量记录（估算口径）`) : "") +
-        (anyCostOnly ? "；带「金额口径」的平台官网只开放消费金额，不提供 token / 请求数" : "") +
-        (anyNoReq ? "；带「无请求数」的平台官网账单不提供请求数，仅有 token 与金额" : "") +
-        `；金额统一为人民币口径，本机用量记录原为美元、已按 ¥${fxr}/USD 折算` +
-        (zeroN
-          ? `；${zeroN} 家在本区间内没有用量，按 0 计` +
-            (nEmpty === zeroN ? "（官网均已接通）" : nEmpty ? `（其中 ${nEmpty} 家官网已接通）` : "")
-          : "") +
-        `。一行一家 API / 平台（共 ${allProvs.length} 家，涉及 ${nModels} 个模型，明细见上方卡片）。`
-      : unifiedEmptyText(),
+    noteText: allProvs.length ? apiTableNote({
+      range: rangeText(), nPlat, nExp, nLocal, nEmpty, zeroN,
+      anyCostOnly, anyNoReq, total: allProvs.length, nModels,
+      fxr: (state.cfg && state.cfg.usd_cny) || 7.1,
+      builtin: builtinMode(),
+    }) : unifiedEmptyText(),
   });
 }
 
@@ -2066,6 +2055,39 @@ function testLineOf(card) {
     if (foot) card.insertBefore(line, foot); else card.appendChild(line);
   }
   return line;
+}
+
+/* 用量明细表下方的「范围」说明：
+   只说当下成立的结论，解释性长句只在对应情况真的出现时才给。 */
+function apiTableNote(st) {
+  const seg = [];
+  let head = "范围：" + st.range + " · ";
+  head += st.nPlat ? st.nPlat + " 家取官网实际扣费口径" : "以本机用量记录为准";
+  if (st.nExp) {
+    head += st.builtin
+      ? "，" + st.nExp + " 家票据失效（需重新获取）"
+      : "，" + st.nExp + " 家票据失效、回落本机记录";
+  }
+  if (st.nLocal) {
+    head += st.builtin
+      ? "，" + st.nLocal + " 家未配置官网凭据（按 0 计）"
+      : "，" + st.nLocal + " 家官网未接通、按本机记录计";
+  }
+  head += " · 共 " + st.total + " 家 / " + st.nModels + " 个模型";
+  seg.push(head);
+
+  const tags = [];
+  if (st.anyCostOnly) tags.push("「金额口径」＝官网只开放消费金额，没有 token / 请求数");
+  if (st.anyNoReq) tags.push("「无请求数」＝官网账单没有请求数，只有 token 与金额");
+  if (tags.length) seg.push(tags.join("；") + "，这两类平台缺的列显示 —，金额不受影响");
+
+  if (st.nLocal) seg.push("本机记录原为美元，已按 ¥" + st.fxr + "/USD 折算");
+  if (st.zeroN) {
+    seg.push(st.zeroN + " 家本区间无用量，按 0 计" +
+      (st.nEmpty === st.zeroN ? "（官网均已接通）"
+        : st.nEmpty ? "（其中 " + st.nEmpty + " 家官网已接通）" : ""));
+  }
+  return seg.join("；") + "。明细见上方卡片。";
 }
 
 function renderApiTable(provs, opts) {  opts = opts || {};
