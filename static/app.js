@@ -1884,7 +1884,7 @@ function niceMax(v) {
 /* ============================================================
    导出与提醒
    ============================================================ */
-function exportCSV() {
+async function exportCSV() {
   const rows = state.exportRows || [];
   if (!rows.length) { toast("本区间没有可导出的数据"); return; }
   const cell = (v) => {
@@ -1909,10 +1909,28 @@ function exportCSV() {
       r.nModels || 0,
     ].map(cell).join(","));
   }
-  const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const fname = "tokenwatch-" + (state.rangeKey || "range") + "-" + localISO(0) + ".csv";
+  const text = lines.join("\r\n");
+
+  /* 桌面应用：弹系统「另存为」，位置每次由你挑。
+     页面没有文件系统权限，写盘要经过 desktop_app.py 暴露的 js_api 桥。 */
+  const api = (window.pywebview || {}).api;
+  if (api && typeof api.save_csv === "function") {
+    try {
+      const path = await api.save_csv(fname, text);
+      if (path) toast("已导出到 " + path);
+      else toast("已取消导出");
+    } catch (e) {
+      toast("导出失败：" + ((e && e.message) || e), true);
+    }
+    return;
+  }
+
+  /* 浏览器 / 开发模式：退回默认下载目录 */
+  const blob = new Blob(["\ufeff" + text], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "tokenwatch-" + (state.rangeKey || "range") + "-" + localISO(0) + ".csv";
+  a.download = fname;
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1200);

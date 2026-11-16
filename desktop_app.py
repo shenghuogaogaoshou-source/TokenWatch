@@ -239,6 +239,46 @@ def window_geometry():
     return w, h, x, y
 
 
+class JsApi:
+    """暴露给页面 JS 的桥（pywebview 会挂到 window.pywebview.api）。
+
+    页面跑在 WebView2 里、没有文件系统权限，所以「导出 CSV 到哪里」
+    必须经过这里：弹系统另存为对话框，把内容写到用户选的路径。
+    """
+
+    def save_csv(self, filename, content):
+        try:
+            import webview
+            win = webview.windows[0] if webview.windows else None
+            if win is None:
+                return None
+            dlg = getattr(webview, "FileDialog", None)
+            dtype = dlg.SAVE if dlg else getattr(webview, "SAVE_DIALOG", 30)
+            r = win.create_file_dialog(
+                dtype,
+                save_filename=str(filename or "tokenwatch.csv"),
+                file_types=("CSV 文件 (*.csv)", "所有文件 (*.*)"))
+        except Exception as e:
+            logging.warning("另存为对话框失败：%s", e)
+            return None
+        path = r
+        if isinstance(path, (list, tuple)):
+            path = path[0] if path else None
+        if not path:
+            return None                       # 用户点了取消
+        path = str(path)
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                f.write(str(content or ""))
+            logging.info("CSV exported -> %s", path)
+            return path
+        except Exception as e:
+            logging.warning("写 CSV 失败（%s）：%s", path, e)
+            return None
+
+
 def open_webview_window(url):
     """优先用 WebView2 原生窗口；返回 False 表示这个环境用不了，交给 Edge 回落。"""
     try:
@@ -255,6 +295,7 @@ def open_webview_window(url):
             background_color=PANEL_BG,
             text_select=True,          # pywebview 6 默认禁止选中文本，这很反直觉
             confirm_close=False,
+            js_api=JsApi(),            # 页面 → 本机的桥（导出 CSV 另存为用）
         )
         threading.Thread(target=paint_window_chrome, daemon=True).start()
         webview.start(gui="edgechromium", icon=ico,
