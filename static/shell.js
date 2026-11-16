@@ -127,7 +127,11 @@ function renderRail() {
 /* 图表副标题跟随区间 */
 function syncCardSubs() {
   const c = document.getElementById("chartSub");
-  if (c && typeof rangeText === "function") c.textContent = "按账户堆叠 · " + rangeText() + " · 人民币";
+  if (c) {
+    c.textContent = typeof chartSubText === "function"
+      ? chartSubText()
+      : "按账户堆叠 · " + (typeof rangeText === "function" ? rangeText() : "") + " · 人民币";
+  }
 }
 
 function boot() {

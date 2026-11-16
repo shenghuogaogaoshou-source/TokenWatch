@@ -426,6 +426,7 @@ async function refreshAll(quiet) {
    渲染
    ============================================================ */
 function renderAll() {
+  sampleHours();          // 先记一次今天的小时基线，再画图
   renderTape();
   renderPricing();
   renderProviders();
@@ -516,10 +517,13 @@ function renderTape() {
   const bigMoney = (v) => '<i class="cur">¥</i>' + esc(money(v).slice(1));
   if (totalCny > 0) {
     $("#tapeBalanceV").innerHTML = bigMoney(totalCny);
-    $("#tapeBalanceF").textContent =
-      "可用余额合计" +
-      (usd ? "（含按 ¥" + fx + "/USD 折算的美元余额）" : "") +
-      (planN ? "，另有 " + planN + " 个订阅套餐" : "");
+    /* 这一行用来解释「这个数是什么」：所有已接入账户的余额相加，覆盖全部模型，
+       跟上面的关注筛选无关。美元折算只放 title，不占正文。 */
+    const bf = $("#tapeBalanceF");
+    bf.textContent = "所有已接入账户的余额相加，含全部模型" +
+      (planN ? "；另有 " + planN + " 个订阅套餐" : "");
+    bf.title = "每个平台账户的可用余额求和，与「关注模型」筛选无关"
+      + (usd ? "；其中美元余额已按 ¥" + fx + "/USD 折算" : "");
   } else if (planN) {
     $("#tapeBalanceV").textContent = planN + " 个";
     $("#tapeBalanceF").textContent = "订阅制套餐（智谱 GLM Coding Plan）额度见卡片";
@@ -540,25 +544,6 @@ function renderTape() {
       : "本地记录";
   }
   $("#tapeCost7V").innerHTML = bigMoney(tot.cost || 0);
-  const altEl = $("#tapeCost7Cny");
-  if (altEl) {
-    /* 主数字已经是人民币，这一行只交代口径：有没有掺本地记录、掺的那部分怎么来的 */
-    const fy = fxSummary(mergedProviders());
-    altEl.textContent = tot.cost > 0
-      ? (fy && fy.noStrCost > 0
-          ? "其中 " + money(fy.noStrCost) + " 来自 " + fy.noStr + " 家无模型明细的平台（整笔计入，未按模型筛选）"
-          : tot.localCost > 0.005
-            /* 只有本机记录真的出了钱才提它：不然「含 1 家本机记录」会让人以为这钱是折出来的 */
-            ? "含 " + tot.localN + " 家本机记录 " + money(tot.localCost) + "（原为美元，已按 ¥" + fx + "/USD 折算）"
-            : "全部为官网账户实际扣费口径")
-      : (anyPlat ? "官网侧" + rt + "暂无消耗记录" : "暂无消耗记录");
-  }
-  const srcF = tot.platN
-    ? "官网直连 " + tot.platN + " 家" + (tot.localN ? " · 本机记录 " + tot.localN + " 家" : "")
-    : "按本机记录";
-  $("#tapeCost7F").textContent = tot.req
-    ? tot.req + " 次请求 · " + srcF
-    : (anyPlat ? rt + "官网侧暂无调用" : rt + "暂无调用记录");
   /* 有金额却没有 token：说明区间内只有「仅提供金额」的平台在产生费用，
      这时画一个 0 会被读成「没用过」，所以显示 — 并说明原因。 */
   const tokV = $("#tapeTok7V");
@@ -1622,22 +1607,143 @@ function platformActs(r, kind, btnText) {
   return acts;
 }
 
-/* 把逐日数据整理成 {date: {apiName: value}} + 系列元信息（按 API / 平台分色） */
-function seriesOfDay(provs, isTok) {
-  const dayMap = {};
+/* ============================================================
+   趋势图：一格代表什么，由统计区间决定
+   今天 → 24 小时；本周 → 周一到周日；半年 / 全年 → 按月；其余 → 逐日
+   ============================================================ */
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function chartAxis() {
+  const key = state.rangeKey;
+  const now = new Date();
+  if (key === "today") {
+    const keys = [], labels = [];
+    for (let h = 0; h < 24; h++) {
+      keys.push(pad2(h));
+      labels.push(h % 3 === 0 ? pad2(h) : "");
+    }
+    return { kind: "hour", keys, labels };
+  }
+  if (key === "week") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));   // 周一为一周之始
+    const keys = [], labels = [];
+    const wd = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+    for (let i = 0; i < 7; i++) {
+      const x = new Date(mon);
+      x.setDate(mon.getDate() + i);
+      keys.push(x.getFullYear() + "-" + pad2(x.getMonth() + 1) + "-" + pad2(x.getDate()));
+      labels.push(wd[i] + " " + (x.getMonth() + 1) + "/" + x.getDate());
+    }
+    return { kind: "day", keys, labels };
+  }
+  if (key === "h180" || key === "y365") {
+    const n = key === "h180" ? 6 : 12;
+    const keys = [], labels = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      keys.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1));
+      labels.push(d.getFullYear() === now.getFullYear()
+        ? (d.getMonth() + 1) + "月"
+        : String(d.getFullYear()).slice(2) + "/" + (d.getMonth() + 1));
+    }
+    return { kind: "month", keys, labels };
+  }
+  const span = Math.max(1, Math.min(365, state.rangeDays || 1));
+  const keys = [], labels = [];
+  for (let i = span - 1; i >= 0; i--) {
+    const k = localISO(i);
+    keys.push(k);
+    labels.push(k.slice(5));
+  }
+  return { kind: "day", keys, labels };
+}
+
+/* ---------- 今天的小时级采样 ----------
+   官网只给「按天」，拿不到小时分布。这里在应用运行期间每分钟记一次当日累计值，
+   相邻采样相减还原每小时增量。应用没开着的小时就是空的，不会把一整天的钱
+   算到开机那一小时上：当天第一次采样只作基线。 */
+const HOUR_KEY = "tokenwatch-hours";
+
+function hourSnap() {
+  try {
+    const s = JSON.parse(localStorage.getItem(HOUR_KEY) || "null");
+    if (s && s.date === localISO(0) && s.cum) return s;
+  } catch (e) {}
+  return { date: localISO(0), base: {}, cum: {} };
+}
+
+function sampleHours() {
+  const list = typeof mergedProviders === "function" ? mergedProviders() : [];
+  if (!list.length) return;
+  const snap = hourSnap();
+  const h = pad2(new Date().getHours());
+  let dirty = false;
+  for (const p of list) {
+    const rec = (((p.usage || {}).days) || {})[localISO(0)] || {};
+    const c = rec.cost || 0;
+    const t = (rec.input || 0) + (rec.output || 0) + (rec.cache_read || 0) + (rec.cache_creation || 0);
+    if (!snap.base[p.name]) { snap.base[p.name] = { c, t }; dirty = true; }
+    const hours = (snap.cum[p.name] = snap.cum[p.name] || {});
+    const prev = hours[h];
+    if (!prev || prev.c !== c || prev.t !== t) { hours[h] = { c, t }; dirty = true; }
+  }
+  if (dirty) { try { localStorage.setItem(HOUR_KEY, JSON.stringify(snap)); } catch (e) {} }
+}
+
+/* 把用量按当前区间的「格」聚起来 */
+function chartData(provs, isTok) {
+  const ax = chartAxis();
+  const map = {};
   const series = {};
+  let carried = 0;      // 应用启动前已经产生的量：无法拆到小时
+
   const valOf = (rec) => isTok
     ? (rec.input || 0) + (rec.output || 0) + (rec.cache_read || 0) + (rec.cache_creation || 0)
     : (rec.cost || 0);
-  const add = (d, key, val) => {
-    if (!val) return;
-    (dayMap[d] || (dayMap[d] = {}))[key] = (dayMap[d][key] || 0) + val;
+  const put = (k, name, v) => {
+    if (!v) return;
+    (map[k] || (map[k] = {}))[name] = (map[k][name] || 0) + v;
   };
+
+  if (ax.kind === "hour") {
+    const snap = hourSnap();
+    for (const p of provs) {
+      series[p.name] = series[p.name] || { name: p.name, acc: visFor(p.name).acc };
+      const base = snap.base[p.name] || { c: 0, t: 0 };
+      carried += isTok ? base.t : base.c;
+      let pc = base.c, pt = base.t;
+      for (const h of ax.keys) {
+        const cur = (snap.cum[p.name] || {})[h];
+        if (!cur) continue;
+        put(h, p.name, isTok ? Math.max(0, cur.t - pt) : Math.max(0, cur.c - pc));
+        pc = cur.c; pt = cur.t;
+      }
+    }
+    return { ax, map, series, carried };
+  }
+
   for (const p of provs) {
     series[p.name] = series[p.name] || { name: p.name, acc: visFor(p.name).acc };
-    for (const [d, rec] of Object.entries(p.usage.days || {})) add(d, p.name, valOf(rec));
+    for (const [d, rec] of Object.entries(((p.usage || {}).days) || {})) {
+      const bucket = ax.kind === "month" ? d.slice(0, 7) : d;
+      if (!ax.keys.includes(bucket)) continue;
+      put(bucket, p.name, valOf(rec));
+    }
   }
-  return { dayMap, series };
+  return { ax, map, series, carried: 0 };
+}
+
+/* 卡片副标题跟着区间写清「一格是什么」 */
+function chartSubText() {
+  const k = state.rangeKey;
+  if (k === "today") return "按账户堆叠 · 今天 24 小时 · 人民币";
+  if (k === "week") return "按账户堆叠 · 本周（周一—周日）· 人民币";
+  if (k === "h180") return "按账户堆叠 · 最近半年（按月）· 人民币";
+  if (k === "y365") return "按账户堆叠 · 最近一年（按月）· 人民币";
+  return "按账户堆叠 · " + rangeText() + " · 人民币";
 }
 
 function renderChart(provs, opts) {
@@ -1646,21 +1752,34 @@ function renderChart(provs, opts) {
   const wrap = svg.closest(".chart-wrap");
   const isTok = state.metric === "tokens";
   wrap.querySelector(".chart-empty")?.remove();
+  wrap.querySelector(".chart-note")?.remove();
   $("#legend").innerHTML = "";
 
-  const { dayMap, series } = seriesOfDay(provs, isTok);
-  /* 横轴应该是「区间内的每一天」，不是「有数据的那几天」：
-     只画有数据的日子时，本月只用到 1 天就会变成一整块满宽色块，看不出趋势。 */
-  const span = Math.max(1, Math.min(365, state.rangeDays || 1));
-  const daysSorted = [];
-  for (let i = span - 1; i >= 0; i--) daysSorted.push(localISO(i));
+  const { ax, map: dayMap, series, carried } = chartData(provs, isTok);
+  const daysSorted = ax.keys;
+  const emptyMsg = (k) => {
+    if (k === "hour") {
+      return "今天还没有小时级记录<br><span style='font-size:11px;color:var(--ink-3)'>官网只提供按天，小时分布从应用运行时开始累计</span>";
+    }
+    if (k === "month") return isTok ? "这几个月没有 Token 用量记录" : "这几个月没有消耗记录";
+    return isTok ? "统计区间内暂无 Token 用量记录" : "统计区间内暂无消耗记录";
+  };
 
   if (!provs.length || !Object.keys(dayMap).length) {
     svg.innerHTML = "";
     $("#legend").innerHTML = "";
-    wrap.appendChild(el("div", "chart-empty", opts.emptyHtml ||
-      (isTok ? "统计区间内暂无 Token 用量记录"
-             : "统计区间内暂无消耗记录<br><span style='font-size:11px;color:var(--ink-3)'>在客户端里调用后会自动记录到本地</span>")));
+    /* 今天这一档要说明白：官网只给按天，小时分布是我们自己采的 */
+    const filtering = typeof selModelSet === "function" && selModelSet().size > 0;
+    let msg = opts.emptyHtml || emptyMsg(ax.kind);
+    if (ax.kind === "hour" && !filtering) {
+      const got = carried > 0.005
+        ? (isTok ? compactTok(carried) + " tokens" : money(carried)) : "";
+      msg = (got ? "今天已产生 " + got : "今天还没有小时级记录") +
+        "<br><span style='font-size:11px;color:var(--ink-3)'>" +
+        (got ? "官网账单只到「天」，这部分的时刻拆不出来；" : "") +
+        "从应用运行时起，每小时实时累计</span>";
+    }
+    wrap.appendChild(el("div", "chart-empty", msg));
     return;
   }
 
@@ -1698,9 +1817,11 @@ function renderChart(provs, opts) {
   }
   const step = Math.max(1, Math.ceil(n / 26));
   daysSorted.forEach((d, i) => {
-    if (i % step !== 0 && i !== n - 1) return;
+    const lab = ax.labels[i];
+    if (!lab) return;                       // 24 小时只标 0/3/6… 点，免得糊成一片
+    if (n > 26 && i % step !== 0 && i !== n - 1) return;
     const x = padL + i * slot + slot / 2;
-    g += `<text x="${x}" y="${H - 6}" class="glab" text-anchor="middle">${d.slice(5)}</text>`;
+    g += `<text x="${x}" y="${H - 6}" class="glab" text-anchor="middle">${esc(lab)}</text>`;
   });
 
   /* 渐变色定义 */
@@ -1730,8 +1851,11 @@ function renderChart(provs, opts) {
       const tip = (s.val / (totalPerDay[i] || 1)) * 100;
       const r = Math.min(3.5, Math.max(0.5, h / 2));
       const gid = "g" + s.acc.slice(1);
+      const when = ax.kind === "hour"
+        ? d + ":00–" + pad2((Number(d) + 1) % 24) + ":00"
+        : d;
       g += `<rect class="tbar" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${bw.toFixed(2)}" height="${Math.max(0.5, h).toFixed(2)}" fill="url(#${gid})" rx="${r.toFixed(2)}">
-        <title>${esc(s.name)} · ${d}${isTok ? " · " + compactTok(s.val) + " tokens" : " · $" + s.val.toFixed(4)}（占当日 ${tip.toFixed(0)}%）</title></rect>`;
+        <title>${esc(s.name)} · ${esc(when)}${isTok ? " · " + compactTok(s.val) + " tokens" : " · ¥" + s.val.toFixed(4)}（占这一格 ${tip.toFixed(0)}%）</title></rect>`;
       y0 = y;
     }
     tops.push({ x: x + bw / 2, y: y0 });
@@ -1744,6 +1868,13 @@ function renderChart(provs, opts) {
   }
 
   svg.innerHTML = g;
+
+  /* 开机前那部分量：不硬塞进某一小时，单独说一句 */
+  if (carried > 0.005) {
+    wrap.appendChild(el("div", "chart-note",
+      "应用启动前今天已产生 " + (isTok ? compactTok(carried) + " tokens" : money(carried)) +
+      "，官网只给按天，拆不到小时"));
+  }
 }
 
 function lighten(hex, percent) {
@@ -2145,32 +2276,44 @@ function buildPlatformForm() {
 
     const head = el("div", "pf-head");
     head.innerHTML = `<span class="pf-glyph">${esc(vis.glyph)}</span>
-      <span class="pf-name">${esc(s.label || kind)}</span>
-      <span class="pf-badge ${cm.configured ? "ok" : ""}">${cm.configured ? "已配置" : "未配置"}</span>
-      <span class="pf-mode">${s.mode === "quota" ? "套餐额度窗口" : "按模型 / 按天明细"}</span>`;
+      <span class="pf-name">${esc(s.label || kind)}
+        <small>${s.mode === "quota" ? "套餐额度窗口" : "按模型 / 按天明细"}</small></span>
+      <span class="pf-badge ${cm.configured ? "ok" : ""}">${cm.configured ? "已配置" : "未配置"}</span>`;
     block.appendChild(head);
 
-    /* 票据期限：Kimi 精确到日（JWT exp）；智谱为经验估算；DeepSeek 为长效凭据 */
+    const res = el("div", "pf-res", "");
+
+    /* 和账户卡同一套接口：会弹一个独立的 Edge 登录窗口，登录完把票据读回来 */
+    const grab = el("button", "btn btn-ghost btn-sm pf-grab", "自动读取登录态");
+    grab.type = "button";
+    grab.addEventListener("click", () => grabPlatform(kind, block, grab));
+
+    /* 票据期限：失效时直接给一个「重新获取」 */
     const exT = expiryText(cm.expiry);
     if (exT) {
-      const el2 = el("div", "pf-exp" + (exT.cls ? " " + exT.cls : ""));
-      el2.title = exT.tip || "";
-      el2.innerHTML = `<span class="pf-exp-k">登录票据</span> <b>${esc(exT.txt)}</b>` +
-        (exT.est ? `<span class="pf-exp-est">估算</span>` : "") +
-        (exT.cls === "warn" || exT.cls === "urgent" || exT.cls === "err"
-          ? `<span class="pf-exp-tip">${esc(exT.tip || "")}</span>` : "");
-      block.appendChild(el2);
+      const line = el("div", "pf-exp" + (exT.cls ? " " + exT.cls : ""));
+      line.title = exT.tip || "";
+      line.innerHTML = `<span class="pf-exp-k">登录票据</span> <b>${esc(exT.txt)}</b>` +
+        (exT.est ? '<span class="pf-exp-est">估算</span>' : "") +
+        (exT.cls === "err" || exT.cls === "urgent"
+          ? '<button type="button" class="btn btn-primary btn-sm pf-exp-act">重新获取</button>' : "");
+      const act = line.querySelector(".pf-exp-act");
+      if (act) act.addEventListener("click", () => grab.click());
+      block.appendChild(line);
     }
 
+    /* 字段改成一行一个、输入框铺满：两列布局会把长 placeholder 挤成两行 */
     const fields = el("div", "pf-fields");
     for (const f of (s.fields || [])) {
       const masked = cm.masked ? cm.masked[f.key] : "";
       const row = el("div", "pf-field");
       row.innerHTML = `<label class="pf-label" for="pf-${kind}-${f.key}">${esc(f.label)}${
-          f.optional ? '<span class="pf-opt">可选</span>' : ""}</label>
+          f.optional ? '<span class="pf-opt">可选</span>' : ""}${
+          masked ? `<span class="pf-cur">当前 <code>${esc(masked)}</code></span>` : ""}</label>
         <input id="pf-${kind}-${f.key}" type="text" data-key="${esc(f.key)}" autocomplete="off"
           spellcheck="false" placeholder="${esc(f.hint || "")}" value="">
-        <div class="pf-meta">${masked ? `当前：<code>${esc(masked)}</code> · ` : ""}留空则不修改${cm.configured ? "；三项全空可清除" : ""}</div>`;
+        <div class="pf-meta">${masked ? "留空则保留当前值" : "留空则不修改"}${
+          cm.configured ? "；三项全空等于清除" : ""}</div>`;
       fields.appendChild(row);
     }
     block.appendChild(fields);
@@ -2187,16 +2330,19 @@ function buildPlatformForm() {
     const save = el("button", "btn btn-primary btn-sm", "保存");
     const clr = el("button", "btn btn-ghost btn-sm pf-danger", "清除");
     test.type = save.type = clr.type = "button";
-    const res = el("span", "pf-res", "");
-    acts.appendChild(test); acts.appendChild(save); acts.appendChild(clr); acts.appendChild(res);
-    block.appendChild(acts);
-
+    const left = el("div", "pf-acts-l");
+    left.appendChild(grab); left.appendChild(test);
+    const right = el("div", "pf-acts-r");
+    right.appendChild(clr); right.appendChild(save);
+    acts.appendChild(left); acts.appendChild(right);
     test.addEventListener("click", () => testPlatform(kind, block, res, test));
     save.addEventListener("click", () => savePlatform(kind, block, save));
     clr.addEventListener("click", () => clearPlatform(kind));
-
+    block.appendChild(acts);
+    block.appendChild(res);
     host.appendChild(block);
   }
+
   $("#platformFootNote").textContent = "凭据仅存本机，不上传、不同步到任何外部服务。";
 }
 
@@ -2209,6 +2355,43 @@ function focusPlatform(kind) {
   setTimeout(() => b.classList.remove("flash"), 1300);
   const inp = b.querySelector("input[data-key]");
   if (inp) inp.focus();
+}
+
+/* 平台凭据弹窗里的「自动读取登录态」：读完直接填进第一个字段
+   （DeepSeek 的 token / Kimi 的 refresh_token / 智谱的 jwt_token） */
+async function grabPlatform(kind, block, btn) {
+  if (btn.dataset.busy) return;
+  btn.dataset.busy = "1";
+  const old = btn.textContent;
+  btn.textContent = "等待登录…";
+  btn.classList.add("loading");
+  const res = block.querySelector(".pf-res");
+  const say = (t, c) => {
+    if (!res) return;
+    res.className = "pf-res" + (c ? " " + c : "");
+    res.textContent = t || "";
+  };
+  say("已打开登录窗口，登录完成后会自动把票据填进来…");
+  try {
+    const j = await postJSON("/api/grab_cred", { driver: kind }, 130000);
+    if (j.found && j.value) {
+      const inp = block.querySelector("input[data-key]");
+      if (inp) {
+        inp.value = j.value;
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+        inp.focus();
+      }
+      say("已读取到票据" + (j.note ? " · " + j.note : "") + "，点「保存」写进本机", "ok");
+    } else {
+      say(j.note || "还没读到，登录完成后可以再点一次", "err");
+    }
+  } catch (e) {
+    say("读取失败：" + e.message, "err");
+  } finally {
+    btn.dataset.busy = "";
+    btn.classList.remove("loading");
+    btn.textContent = old;
+  }
 }
 
 async function testPlatform(kind, block, resEl, btn) {
