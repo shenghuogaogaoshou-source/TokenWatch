@@ -176,8 +176,22 @@
 
         <details class="foot">
           <summary>数据口径与说明</summary>
-          <p><b>数据来源：</b>余额与用量尽量取自各平台官方接口（用你的网页登录态直连供应商控制台，即账户实际扣费口径）；官网未接通或该平台不提供明细时，会在同一视图里逐家标注，不混算。平台凭据只保存在本机应用数据目录的 <code>platform_creds.json</code> 中，不会上传、不会被本页面显示原文。</p>
-          <p><b>定价：</b>价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；跨模型比价用的是按 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算出的「综合单价」（元 / 百万 tokens），可在 <code>config.json</code> 的 <code>price_mix</code> 里调整。<strong>页面所有金额都是人民币</strong>：美元计价的部分已按 ¥<span id="fxRate">7.10</span>/USD 折算（可在 <code>config.json</code> 的 <code>usd_cny</code> 里改汇率）。票据有效期按真实凭据标注（Kimi 读 JWT 的 exp；智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」），若官网本次查询回报票据失效，则以实测为准。</p>
+          <p><b>余额与用量：</b>优先取各平台官方账户接口，都是账户实际扣费口径 ——
+            DeepSeek 用量走网页登录态、余额走 API Key（官方没有网页余额接口）；
+            Kimi 余额与用量都走网页凭据，rtoken 每次续期自动滚动，应用在用就长期有效；
+            智谱走账户报表与费用账单，配置 API Key 后优先用 Key（永不过期），网页票据只作兜底。
+            官网未接通、不提供明细的会在同一视图里逐家标注，不混算；
+            官网给过的逐日用量还会存一份本机档（<code>usage.db</code>），
+            票据失效或断网时兜底，卡片会标「本机存档 · 不是实时值」。</p>
+          <p><b>凭据：</b>只保存在本机应用数据目录的 <code>platform_creds.json</code>，不会上传、页面不显示原文。
+            票据有效期按真实凭据标注：Kimi 读 JWT 的 exp（续期后总是 90 天）；
+            智谱网页票据没有 exp，按 7 天经验有效期估算并标「估算」，配置 API Key 后显示「长期有效」；
+            官网本次查询回报票据失效时，以实测为准。</p>
+          <p><b>定价：</b>价格取自各家开放平台公开定价页，<b id="priceAsOfFoot">—</b> 核实；
+            跨模型比价用 <b id="priceMixFoot">输入 30% / 缓存命中 60% / 输出 10%</b> 配比折算的「综合单价」（元 / 百万 tokens），
+            可在 <code>config.json</code> 的 <code>price_mix</code> 里调整；
+            定价页另有「按你的实际用量折算」一节，用统计区间里真实的输入 / 缓存 / 输出分布算「换平台要花多少钱」。
+            页面所有金额都是人民币：美元计价的部分按 ¥<span id="fxRate">7.10</span>/USD 折算（<code>config.json</code> 的 <code>usd_cny</code>）。</p>
         </details>
       </section>
 
