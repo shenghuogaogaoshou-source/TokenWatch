@@ -656,7 +656,7 @@ def balance_zhipu(p, timeout=12):
     在拉用量时顺带产出（resource_pack），余额侧不再重复拉一遍账单。
     """
     cred = load_platform_creds().get("zhipu") or {}
-    if str(cred.get("jwt_token") or "").strip():
+    if str(cred.get("jwt_token") or "").strip() or str(cred.get("api_key") or "").strip():
         acct = zhipu_account(cred, timeout)
         if acct:
             return {"status": "ok", "type": "money",
@@ -908,15 +908,17 @@ PLATFORM_SPEC = {
         "label": "智谱 GLM",
         "mode": "usage",          # 费用账单可给按模型/按天明细（含输入输出拆分）
         "fields": [
-            {"key": "jwt_token", "label": "登录票据 JWT",
-             "hint": "bigmodel.cn 控制台 F12 → Console 执行 localStorage.getItem('bigmodel_token_production') 或复制 Cookie 里 bigmodel_token_production 的值"},
+            {"key": "jwt_token", "label": "登录票据 JWT（备用）",
+             "hint": "bigmodel.cn 控制台 F12 → Console 执行 localStorage.getItem('bigmodel_token_production')；约 7 天有效"},
+            {"key": "api_key", "label": "API Key（推荐，永不过期）", "optional": True,
+             "hint": "bigmodel.cn → API Keys 页创建，形如 xxx.yyy；填了它就不用再定期登录"},
         ],
         "howto": [
-            "浏览器登录 bigmodel.cn（智谱开放平台控制台）",
-            "按 F12 打开开发者工具，切到 Console 面板",
+            "推荐：到 bigmodel.cn → API Keys 页新建一个 Key（形如 id.secret，永不过期），填进下面的「API Key」框",
+            "备用：浏览器登录 bigmodel.cn（智谱开放平台控制台），按 F12 → Console",
             "执行 localStorage.getItem('bigmodel_token_production')，或到 Application → Cookies 里找 bigmodel_token_production",
-            "复制那串 eyJhbGciOi… 粘到上面（不用加 Bearer 前缀）",
-            "该票据约 7 天有效；过期后界面会提示重新获取。预付费账号靠它读「费用账单」拿到用量",
+            "复制那串 eyJhbGciOi… 粘到「登录票据 JWT」（不用加 Bearer 前缀）；约 7 天有效",
+            "两者都填时优先用 API Key，网页票据只在 Key 被限制时兜底",
         ],
     },
 }
@@ -1108,7 +1110,12 @@ def creds_meta(usage=None):
                   "configured": filled_all, "masked": fields}
         if any(str(c.get(f["key"]) or "").strip() for f in spec["fields"]):
             exp = cred_expiry(k, c)
-            if k in dead:
+            if k == "zhipu" and str(c.get("api_key") or "").strip():
+                # API Key 永不过期；网页 JWT 只是兜底，它的 7 天期限不该再刷红条
+                exp = {"at": None, "days": None, "level": "ok", "long_lived": True,
+                       "source": "已配置 API Key（永不过期），网页票据仅作兜底"
+                                 + ("，当前网页票据已失效" if exp.get("level") == "expired" else "")}
+            elif k in dead:
                 exp = {"at": None, "days": -1, "level": "expired",
                        "source": "官网本次返回票据失效，需重新获取"}
             elif (k in alive and exp.get("estimated")
@@ -1681,10 +1688,13 @@ def _num(v, default=0.0):
         return default
 
 
-def _zh_hdr(cred):
-    """裸 JWT 即可（实测带上 Bearer 也能过），org/project 可选。"""
+def _zh_hdr(cred, mode="jwt"):
+    """智谱请求头。mode="key" 用 API Key（永不过期），mode="jwt" 用网页登录票据。
+    两者都用裸 Authorization（实测带 Bearer 也能过），org/project 可选。"""
     c = cred or {}
-    h = {"Authorization": str(c.get("jwt_token") or "").strip(),
+    tok = str(c.get("api_key") or "").strip() if mode == "key" \
+        else str(c.get("jwt_token") or "").strip()
+    h = {"Authorization": tok,
          "User-Agent": UA_BROWSER, "Accept": "application/json, text/plain, */*",
          "Content-Type": "application/json",
          "Origin": "https://bigmodel.cn", "Referer": "https://bigmodel.cn/"}
@@ -1728,20 +1738,31 @@ def _zh_list_price(r):
 
 
 def zhipu_account(cred, timeout=20):
-    """账户报表：余额 / 累计充值 / 累计消费（拿不到返回 None）"""
-    if not str((cred or {}).get("jwt_token") or "").strip():
+    """账户报表：余额 / 累计充值 / 累计消费（拿不到返回 None）。
+
+    该接口对 API Key 开放（社区实测），所以 Key 优先 —— Key 永不过期，
+    网页 JWT 只在没填 Key 时使用。
+    """
+    c = cred or {}
+    modes = []
+    if str(c.get("api_key") or "").strip():
+        modes.append("key")
+    if str(c.get("jwt_token") or "").strip():
+        modes.append("jwt")
+    if not modes:
         return None
-    _, j = http_json(ZHIPU_API + "/biz/account/query-customer-account-report",
-                     "GET", _zh_hdr(cred), None, timeout)
-    if not isinstance(j, dict) or not (j.get("success") or j.get("code") in (0, 200)):
-        return None
-    d = j.get("data") or {}
-    return {"balance": _num(d.get("balance")),
-            "available": _num(d.get("availableBalance")),
-            "recharge": _num(d.get("rechargeAmount")),
-            "give": _num(d.get("giveAmount")),
-            "total_spend": _num(d.get("totalSpendAmount")),
-            "today_spend": _num(d.get("todaySpendAmount"))}
+    for mode in modes:
+        _, j = http_json(ZHIPU_API + "/biz/account/query-customer-account-report",
+                         "GET", _zh_hdr(c, mode), None, timeout)
+        if isinstance(j, dict) and (j.get("success") or j.get("code") in (0, 200)):
+            d = j.get("data") or {}
+            return {"balance": _num(d.get("balance")),
+                    "available": _num(d.get("availableBalance")),
+                    "recharge": _num(d.get("rechargeAmount")),
+                    "give": _num(d.get("giveAmount")),
+                    "total_spend": _num(d.get("totalSpendAmount")),
+                    "today_spend": _num(d.get("todaySpendAmount"))}
+    return None
 
 
 ZHIPU_PAGE_SIZE = 500
@@ -1750,6 +1771,10 @@ ZHIPU_MAX_PAGES = 40        # 兜底：单月最多取 2 万行，防止接口 t
 
 def zhipu_bills(cred, month, timeout=25):
     """某账期的全部计费记录 → (rows, err)。err 为 None 表示成功。
+
+    凭据按「API Key → 网页 JWT」依次尝试：账单接口是否对 Key 开放未经官方确认，
+    所以 Key 被拒（403 APIKey not allow access 等）时自动退回 JWT；
+    两个都鉴权失败才算票据失效。
 
     ⚠ 智谱控制台失效时的返回很不规整：票据过期 / 被顶下线**不一定给 401**，
     实测常见「HTTP 200 + 空 body」，json.loads 直接得到 None。若不单独识别，
@@ -1760,11 +1785,34 @@ def zhipu_bills(cred, month, timeout=25):
     （以前写死 pageSize=1000 且只取第 1 页，用量大的月份就会少账）。后面几页失败时
     保留已取到的行，总比把整月判成失败好。
     """
+    modes = []
+    if str((cred or {}).get("api_key") or "").strip():
+        modes.append("key")
+    if str((cred or {}).get("jwt_token") or "").strip():
+        modes.append("jwt")
+    if not modes:
+        return [], "__EXPIRED__未配置智谱凭据（API Key 或网页登录票据）"
+    last_err = None
+    for mode in modes:
+        rows, err = _zhipu_bills_once(cred, month, mode, timeout)
+        if err is None:
+            return rows, None
+        if err.startswith("__EXPIRED__"):
+            last_err = err
+            continue          # 这个凭据被拒，换下一个（Key 被限就退回 JWT）
+        return rows, err      # 网络 / 解析类错误与凭据无关，直接报
+    # 全部凭据都鉴权失败
+    if modes[0] == "key" and "jwt" not in modes:
+        return [], "__EXPIRED__API Key 无法访问账单接口，请补填网页登录票据（或检查 Key 是否有效）"
+    return [], last_err or "__EXPIRED__凭据已失效"
+
+
+def _zhipu_bills_once(cred, month, mode, timeout=25):
     out, page = [], 1
     while page <= ZHIPU_MAX_PAGES:
         url = (ZHIPU_API + "/finance/expenseBill/expenseBillList?billingMonth=%s"
                "&pageNum=%d&pageSize=%d" % (month, page, ZHIPU_PAGE_SIZE))
-        code, j = http_json(url, "GET", _zh_hdr(cred), None, timeout)
+        code, j = http_json(url, "GET", _zh_hdr(cred, mode), None, timeout)
         if not isinstance(j, dict):
             if page > 1:
                 break
@@ -1796,8 +1844,8 @@ def zhipu_bills(cred, month, timeout=25):
 
 def pu_zhipu(cred, days):
     c = cred or {}
-    if not str(c.get("jwt_token") or "").strip():
-        return {"status": "nokey", "detail": "未配置登录票据 JWT"}
+    if not (str(c.get("jwt_token") or "").strip() or str(c.get("api_key") or "").strip()):
+        return {"status": "nokey", "detail": "未配置智谱凭据（API Key 或网页登录票据）"}
     days_set = _days_set(days)
     months = _months_of(days)
     tok_acc, cost_acc = {}, {}
