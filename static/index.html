@@ -40,13 +40,13 @@
         <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="8" cy="5.5" r="2.8" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M2.8 13.6c.4-2.6 2.6-4.1 5.2-4.1s4.8 1.5 5.2 4.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg>
         <span>账户</span>
       </button>
-      <button type="button" data-page="models">
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.8 14 5v6l-6 3.2L2 11V5l6-3.2Z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/><path d="M2 5l6 3.2L14 5M8 8.2v6" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
-        <span>模型</span>
-      </button>
       <button type="button" data-page="pricing">
         <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2.5 2.5h11v11h-11z" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M5 6h6M5 9h4M5 12h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         <span>定价</span>
+      </button>
+      <button type="button" data-page="models">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.8 14 5v6l-6 3.2L2 11V5l6-3.2Z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/><path d="M2 5l6 3.2L14 5M8 8.2v6" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+        <span>模型</span>
       </button>
     </nav>
 
@@ -201,6 +201,16 @@
         <p class="page-note">账户来自各家官网或中转站，全部在本机完成采集与存储。同一家平台可以接入多个账号（例如两个中转站），分别独立统计余额与用量。</p>
       </section>
 
+      <!-- ---------------- 定价 ---------------- -->
+      <section class="page" data-page="pricing" hidden>
+        <div class="page-head">
+          <div>
+            <h2>定价与推荐</h2>
+            <p id="priceNote">按各家官网当前价折算，含错峰时段</p>
+          </div>
+        </div>
+        <section id="pricingPanel" aria-label="分时段定价与推荐"></section>
+      </section>
       <!-- ---------------- 模型 ---------------- -->
       <section class="page" data-page="models" hidden>
         <div class="page-head">
@@ -229,16 +239,6 @@
         <div class="mdl-list" id="mdlList"></div>
       </section>
 
-      <!-- ---------------- 定价 ---------------- -->
-      <section class="page" data-page="pricing" hidden>
-        <div class="page-head">
-          <div>
-            <h2>定价与推荐</h2>
-            <p id="priceNote">按各家官网当前价折算，含错峰时段</p>
-          </div>
-        </div>
-        <section id="pricingPanel" aria-label="分时段定价与推荐"></section>
-      </section>
 
     </main>
   </div>

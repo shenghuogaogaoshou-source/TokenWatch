@@ -7,8 +7,8 @@
 const PAGE_META = {
   overview: { title: "总览", sub: "余额实时查询 · 用量以官网实扣口径优先", seg: true },
   accounts: { title: "账户", sub: "一个账户一张卡片 · 凭据只存本机", seg: false },
-  models:   { title: "模型", sub: "从公开目录里勾选你实际会用的模型", seg: false },
   pricing:  { title: "定价", sub: "各家官网当前价 · 按你的用量配比折成综合单价", seg: true },
+  models:   { title: "模型", sub: "从公开目录里勾选你实际会用的模型", seg: false },
 };
 let curPage = "overview";
 
