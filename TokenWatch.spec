@@ -17,7 +17,9 @@ a = Analysis(
     [os.path.join(HERE, 'desktop_app.py')],
     pathex=[],
     binaries=[],
-    datas=[(os.path.join(HERE, 'static'), 'static')],
+    # tokenwatch.ico 要作为文件带进包里：启动后用它给 Edge 应用窗口设任务栏图标
+    datas=[(os.path.join(HERE, 'static'), 'static'),
+           (os.path.join(HERE, 'tokenwatch.ico'), '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
