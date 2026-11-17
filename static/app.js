@@ -954,7 +954,14 @@ function buildCard(p, i) {
   rBtn.href = rechargeUrl; rBtn.target = "_blank"; rBtn.rel = "noopener";
   const sBtn = el("a", "btn-site", "平台控制台");
   sBtn.href = p.website_url || "#"; sBtn.target = "_blank"; sBtn.rel = "noopener";
+  const invUrl = defaultInvoice(p.name);
+  const iBtn = invUrl ? el("a", "btn-site", "开具发票") : null;
+  if (iBtn) {
+    iBtn.href = invUrl; iBtn.target = "_blank"; iBtn.rel = "noopener";
+    iBtn.title = invoiceHint(p.name);
+  }
   foot.appendChild(rBtn);
+  if (iBtn) foot.appendChild(iBtn);        // 前往充值 → 开具发票 → 平台控制台
   if (p.website_url) foot.appendChild(sBtn);
   if (p._acct) {
     const eBtn = el("button", "btn-site", "账户设置");
@@ -1032,6 +1039,24 @@ function defaultRecharge(name) {
   return null;
 }
 
+/* 发票入口：能确认到具体页面的给深链，其余给控制台财务区。
+   提示里写清导航路径（官方 FAQ 口径）。 */
+function defaultInvoice(name) {
+  const n = String(name || "").toLowerCase();
+  if (n.includes("deepseek")) return "https://platform.deepseek.com/transactions";   // 官方 FAQ：账单页 → 发票管理
+  if (n.includes("kimi") || n.includes("moonshot")) return "https://platform.kimi.com/finance";  // 控制台 费用 → 发票管理
+  if (n.includes("zhipu") || n.includes("glm") || n.includes("智谱")) return "https://bigmodel.cn/finance/invoice";  // 财务中心 → 发票管理
+  return null;
+}
+
+function invoiceHint(name) {
+  const n = name.toLowerCase();
+  if (n.includes("deepseek")) return "官方账单页 → 发票管理：支持按充值金额或消耗金额开票，7 个工作日内发到邮箱";
+  if (n.includes("kimi")) return "控制台 → 费用 → 发票管理：选充值记录后按提示填写，电子发票发到邮箱";
+  if (n.includes("zhipu") || n.includes("glm")) return "财务中心 → 发票管理";
+  return "到官网控制台的财务 / 发票页申请开票";
+}
+
 function mainMoney(b) {
   const arr = b.items || [];
   const cny = arr.find((x) => x.currency === "CNY");
@@ -1076,13 +1101,21 @@ function buildBalance(p, b) {
       const cnyTotal = (b.items || []).reduce((s, it) => s + cnyOf(it), 0);
       const low = lowFor(p.name);
       const lowFlag = low > 0 && cnyTotal < low && cnyTotal > 0;
+      const availBad = b.available === false;    // 官网接口自己标记「余额可能不足」
       const perProv = !!((state.cfg && state.cfg.low_balance_by_provider) || {})[p.name];
       const div = el("div", "p-balance");
       const box = el("div", "bal-main");
+      /* 「官网标记余额不足」和本地预警说的一回事，只显示一个：
+         官网的 available 标记优先，没有它才亮本地的「低于预警」 */
+      const warnTxt = availBad
+        ? "⚠ 余额可能不足（官网标记）"
+        : lowFlag ? `低于预警 ¥${low}` : "";
+      const warnTip = availBad
+        ? "官网余额接口返回 is_available=false"
+        : perProv ? "该提供商单独设置的预警阈值" : "全局预警阈值";
       box.innerHTML = `
-        <div class="bal-label">可用余额 <span class="err-tag" ${b.available === false ? "" : 'style="display:none"'}>⚠ 余额可能不足</span>${
-          lowFlag ? `<span class="low-tag" title="${perProv ? "该提供商单独设置的预警阈值" : "全局预警阈值"}">低于预警 ¥${low}</span>` : ""}</div>
-        <div class="bal-val${lowFlag ? " warn" : ""}">${money(cnyOf(main))}<small>CNY</small></div>`;
+        <div class="bal-label">可用余额${warnTxt ? `<span class="${availBad ? "err-tag" : "low-tag"}" title="${warnTip}">${warnTxt}</span>` : ""}</div>
+        <div class="bal-val${lowFlag || availBad ? " warn" : ""}">${money(cnyOf(main))}<small>CNY</small></div>`;
       div.appendChild(box);
       /* 余额能撑几天：比「还剩 ¥23.04」有用得多的一句话 */
       const rc = recentDailyCost(p);
