@@ -16,7 +16,7 @@ import threading
 import subprocess
 
 APP_NAME = "TokenWatch"
-TITLE = "TokenWatch · 多模型用量台"
+TITLE = "TokenWatch"
 BRAND = "#3A2E1B"        # 图标里眼睛的深棕，用作标题栏底色
 BRAND_TEXT = "#F3DFB4"   # 图标底的皮肤黄，用作标题文字
 PANEL_BG = "#F7F0E2"     # 界面暖纸底色，窗口首帧用它，避免闪白
