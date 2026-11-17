@@ -1684,17 +1684,19 @@ function sampleHours() {
 
 /* 把用量按当前区间的「格」聚起来 */
 function chartData(provs, isTok) {
+  /* 每一格同时算「金额」和「tokens」两套值：柱子画当前口径，
+     悬停提示与合计行把两个口径一起给出来，不用来回切。 */
   const ax = chartAxis();
-  const map = {};
+  const both = {};      // bucket -> 平台名 -> {c: 金额, t: tokens}
   const series = {};
   let carried = 0;      // 应用启动前已经产生的量：无法拆到小时
 
-  const valOf = (rec) => isTok
-    ? (rec.input || 0) + (rec.output || 0) + (rec.cache_read || 0) + (rec.cache_creation || 0)
-    : (rec.cost || 0);
-  const put = (k, name, v) => {
-    if (!v) return;
-    (map[k] || (map[k] = {}))[name] = (map[k][name] || 0) + v;
+  const add = (k, name, c, t) => {
+    if (!c && !t) return;
+    const b = (both[k] || (both[k] = {}));
+    const rec = (b[name] || (b[name] = { c: 0, t: 0 }));
+    rec.c += c;
+    rec.t += t;
   };
 
   if (ax.kind === "hour") {
@@ -1707,11 +1709,11 @@ function chartData(provs, isTok) {
       for (const h of ax.keys) {
         const cur = (snap.cum[p.name] || {})[h];
         if (!cur) continue;
-        put(h, p.name, isTok ? Math.max(0, cur.t - pt) : Math.max(0, cur.c - pc));
+        add(h, p.name, Math.max(0, cur.c - pc), Math.max(0, cur.t - pt));
         pc = cur.c; pt = cur.t;
       }
     }
-    return { ax, map, series, carried };
+    return { ax, both, series, carried };
   }
 
   for (const p of provs) {
@@ -1719,10 +1721,11 @@ function chartData(provs, isTok) {
     for (const [d, rec] of Object.entries(((p.usage || {}).days) || {})) {
       const bucket = ax.kind === "month" ? d.slice(0, 7) : d;
       if (!ax.keys.includes(bucket)) continue;
-      put(bucket, p.name, valOf(rec));
+      add(bucket, p.name, rec.cost || 0,
+        (rec.input || 0) + (rec.output || 0) + (rec.cache_read || 0) + (rec.cache_creation || 0));
     }
   }
-  return { ax, map, series, carried: 0 };
+  return { ax, both, series, carried: 0 };
 }
 
 /* 卡片副标题跟着区间写清「一格是什么」 */
@@ -1744,7 +1747,18 @@ function renderChart(provs, opts) {
   wrap.querySelector(".chart-note")?.remove();
   $("#legend").innerHTML = "";
 
-  const { ax, map: dayMap, series, carried } = chartData(provs, isTok);
+  const { ax, both, series, carried } = chartData(provs, isTok);
+  /* 当前口径的值（柱子画它）；另一口径在悬停提示里一起出现 */
+  const dayMap = {};
+  let totC = 0, totT = 0;
+  for (const [k, rec] of Object.entries(both)) {
+    const m = (dayMap[k] = {});
+    for (const [name, v] of Object.entries(rec)) {
+      m[name] = isTok ? v.t : v.c;
+      totC += v.c;
+      totT += v.t;
+    }
+  }
   const daysSorted = ax.keys;
   const emptyMsg = (k) => {
     if (k === "hour") {
@@ -1843,8 +1857,9 @@ function renderChart(provs, opts) {
       const when = ax.kind === "hour"
         ? d + ":00–" + pad2((Number(d) + 1) % 24) + ":00"
         : d;
+      const bv = (both[d] || {})[s.name] || { c: 0, t: 0 };
       g += `<rect class="tbar" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${bw.toFixed(2)}" height="${Math.max(0.5, h).toFixed(2)}" fill="url(#${gid})" rx="${r.toFixed(2)}">
-        <title>${esc(s.name)} · ${esc(when)}${isTok ? " · " + compactTok(s.val) + " tokens" : " · ¥" + s.val.toFixed(4)}（占这一格 ${tip.toFixed(0)}%）</title></rect>`;
+        <title>${esc(s.name)} · ${esc(when)} · ¥${bv.c.toFixed(4)} · ${compactTok(bv.t)} tokens（占这一格 ${tip.toFixed(0)}%）</title></rect>`;
       y0 = y;
     }
     tops.push({ x: x + bw / 2, y: y0 });
@@ -1858,12 +1873,14 @@ function renderChart(provs, opts) {
 
   svg.innerHTML = g;
 
+  /* 合计行：金额与 tokens 一起给，不用来回切口径 */
+  let note = "本区间合计 " + money(totC) + " · " + compactTok(totT) + " tokens";
   /* 开机前那部分量：不硬塞进某一小时，单独说一句 */
   if (carried > 0.005) {
-    wrap.appendChild(el("div", "chart-note",
-      "应用启动前今天已产生 " + (isTok ? compactTok(carried) + " tokens" : money(carried)) +
-      "，官网只给按天，拆不到小时"));
+    note += "；其中 " + (isTok ? compactTok(carried) + " tokens" : money(carried)) +
+      " 在应用启动前产生，官网只给按天，拆不到小时";
   }
+  wrap.appendChild(el("div", "chart-note", note));
 }
 
 function lighten(hex, percent) {
@@ -2095,9 +2112,9 @@ function apiTableNote(st) {
   seg.push(head);
 
   const tags = [];
-  if (st.anyCostOnly) tags.push("「金额口径」＝官网只开放消费金额，没有 token / 请求数");
-  if (st.anyNoReq) tags.push("「无请求数」＝官网账单没有请求数，只有 token 与金额");
-  if (tags.length) seg.push(tags.join("；") + "，这两类平台缺的列显示 —，金额不受影响");
+  if (st.anyCostOnly) tags.push("「金额口径」＝官网只开放消费金额");
+  if (st.anyNoReq) tags.push("「无请求数」＝官网账单不含请求数");
+  if (tags.length) seg.push(tags.join("；") + " —— 对应的列显示 —，金额不受影响");
 
   if (st.nLocal) seg.push("本机记录原为美元，已按 ¥" + st.fxr + "/USD 折算");
   if (st.zeroN) {
